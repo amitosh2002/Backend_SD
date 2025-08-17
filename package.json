@@ -7,16 +7,10 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon index.js"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/amitosh2002/SD_Tracking_backend.git"
-  },
+
   "author": "Amitosh kumar",
   "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/amitosh2002/SD_Tracking_backend/issues"
-  },
-  "homepage": "https://github.com/amitosh2002/SD_Tracking_backend#readme",
+
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.1.0",
