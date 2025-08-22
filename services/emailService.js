@@ -387,6 +387,7 @@ const sendBulkEmails = async (recipients, subject, text, html) => {
   }
 };
 
+// Export all functions as named exports
 export {
   sendEmail,
   sendWelcomeEmail,
@@ -398,3 +399,18 @@ export {
   sendTicketStatusUpdate,
   sendBulkEmails,
 };
+
+// Also export as default for backward compatibility
+const EmailService = {
+  sendEmail,
+  sendWelcomeEmail,
+  sendTicketNotification,
+  sendProjectAssignment,
+  sendPasswordReset,
+  sendPasswordResetOTP,
+  sendVerificationOTP,
+  sendTicketStatusUpdate,
+  sendBulkEmails,
+};
+
+export default EmailService;
