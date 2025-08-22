@@ -1,1 +1,83 @@
-rt
+import express from "express";
+import { dbConfig } from "./db/dbConfig.js";
+import mongoose from "mongoose";
+import dotenv from "dotenv";
+import projectRoutes from "./routes/projectRoutes.js";
+import ticketRoutes from "./routes/ticketRoutes.js";
+import emailRoutes from "./routes/emailRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
+import cors from "cors";
+// import { MongoClient } from 'mongodb';
+// import bodyParser from 'body-parser';
+// import dotenv from 'dotenv';
+dotenv.config();
+const app = express();
+const port = process.env.PORT || 8000;
+
+// Middleware
+app.use(express.json());
+
+// cors
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://sd-tracking.onrender.com",
+];
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  })
+);
+
+//Db connection
+console.log("Connecting to MongoDB with URI:", dbConfig.url);
+mongoose
+  .connect(dbConfig.url, dbConfig.options)
+  .then(() => {
+    console.log("Connected to MongoDB");
+  })
+  .catch((err) => {
+    console.error("MongoDB connection error:", err);
+  });
+
+const startServer = () => {
+  app.listen(port, () => {
+    console.log(`🚀 Server is running on port ${port}.`);
+  });
+};
+
+// const mongoUri = process.env.MONGODB_URI;
+// // console.log(mongoUri);
+// if (mongoUri) {
+//   mongoose
+//     .connect(mongoUri)
+//     .then(() => {
+//       console.log("✅ Connected to MongoDB.");
+//       startServer();
+//     })
+//     .catch((err) => {
+//       console.error("❌ MongoDB connection error:", err.message);
+//       console.warn("⚠️ Starting server without DB connection.");
+//       startServer();
+//     });
+// } else {
+//   console.warn(
+//     "⚠️ MONGODB_URI not set. Starting server without DB connection."
+//   );
+startServer();
+// }
+
+// routes initiliztion
+app.use("/api/platform", projectRoutes); // routes for each project
+app.use("/api/platform", ticketRoutes); // ticket routes
+app.use("/api/email", emailRoutes); // email routes
+app.use("/api/auth", authRoutes); // authentication routes
+
+app.get("/server", (req, res) => {
+  res.send("Hello World!");
+});
