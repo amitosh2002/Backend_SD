@@ -1,0 +1,4 @@
+[dotenv@17.2.1] injecting env (3) from .env -- tip: 📡 observe env with Radar: https://dotenvx.com/radar
+[dotenv@17.2.1] injecting env (0) from .env -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
+✅ Connected to MongoDB.
+🚀 Server is running on port 8000;.
