@@ -46,10 +46,6 @@ const userSchema = new mongoose.Schema(
       enum: ["user", "admin", "manager"],
       default: "user",
     },
-    otp: {
-      code: String,
-      expiresAt: Date,
-    },
     loginAttempts: {
       type: Number,
       default: 0,
@@ -135,51 +131,10 @@ userSchema.methods.resetLoginAttempts = function () {
   });
 };
 
-// Method to generate OTP
-userSchema.methods.generateOTP = function () {
-  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-  this.otp = {
-    code: otpCode,
-    expiresAt: expiresAt,
-  };
-
-  return otpCode;
-};
-
-// Method to verify OTP
-userSchema.methods.verifyOTP = function (otpCode) {
-  if (!this.otp || !this.otp.code || !this.otp.expiresAt) {
-    return false;
-  }
-
-  if (this.otp.expiresAt < new Date()) {
-    return false;
-  }
-
-  if (this.otp.code !== otpCode) {
-    return false;
-  }
-
-  // Clear OTP after successful verification
-  this.otp = undefined;
-  return true;
-};
-
-// Method to check if OTP is expired
-userSchema.methods.isOTPExpired = function () {
-  if (!this.otp || !this.otp.expiresAt) {
-    return true;
-  }
-  return this.otp.expiresAt < new Date();
-};
-
 // Transform document to JSON
 userSchema.set("toJSON", {
   transform: function (doc, ret) {
     delete ret.password;
-    delete ret.otp;
     delete ret.loginAttempts;
     delete ret.lockUntil;
     return ret;

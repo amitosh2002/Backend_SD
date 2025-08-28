@@ -1,4 +1,5 @@
 import { TicketModel } from "../models/TicketModels.js";
+import User from "../models/UserModel.js";
 
 export const createTicket = async (req, res) => {
   try {
@@ -10,6 +11,7 @@ export const createTicket = async (req, res) => {
       assignee,
       branch,
       timeLog,
+      description,
       storyPoint,
       reviewDocument,
       ticketLog,
@@ -30,6 +32,7 @@ export const createTicket = async (req, res) => {
       storyPoint,
       reviewDocument,
       ticketLog,
+      description
     });
     await ticket.save();
     return res.status(201).json(ticket);
@@ -39,6 +42,95 @@ export const createTicket = async (req, res) => {
   }
 };
 
+export const createTicketV2 = async (req, res) => {
+  try {
+    const ticketData = req.body;
+    const userId =req.body.userId;
+    const user=await User.findById(userId);
+    if(!user){
+      return res.status(400).json({message:"User not found"});
+    }
+
+    // Basic validation
+    if (!ticketData.title || !ticketData.type) {
+      return res.status(400).json({
+        success: false,
+        message: "'title' and 'type' are required",
+        code: "MISSING_REQUIRED_FIELDS"
+      });
+    }
+
+    // Optional: Sanitize and set defaults
+    const sanitizedData = {
+      ...ticketData,
+      // Set defaults if not provided
+      priority: ticketData.priority || 'MEDIUM',
+      status: ticketData.status || 'BACKLOG',
+      // Add reporter from authenticated user if not provided
+      reporter: ticketData.reporter  || user?.username,
+      assignee: ticketData.assignee || "Unassigned",
+      // Add timestamps
+      createdBy: user?.userId,
+      // Remove any undefined or null values
+    };
+
+    // Remove undefined/null values
+    Object.keys(sanitizedData).forEach(key => {
+      if (sanitizedData[key] === undefined || sanitizedData[key] === null) {
+        delete sanitizedData[key];
+      }
+    });
+
+    const ticket = new TicketModel(sanitizedData);
+    await ticket.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "Ticket created successfully",
+      data: {
+        id: ticket._id,
+        ticketKey: ticket.ticketKey,
+        title: ticket.title,
+        type: ticket.type,
+        status: ticket.status,
+        priority: ticket.priority,
+        reporter: ticket.reporter,
+        assignee: ticket.assignee,
+        createdAt: ticket.createdAt,
+        // Include other relevant fields
+        ...ticket.toObject()
+      }
+    });
+  } catch (err) {
+    console.error("Error creating ticket:", err);
+    
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: "Validation error",
+        code: "VALIDATION_ERROR",
+        errors: Object.keys(err.errors).reduce((acc, key) => {
+          acc[key] = err.errors[key].message;
+          return acc;
+        }, {})
+      });
+    }
+
+    if (err.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Duplicate ticket key",
+        code: "DUPLICATE_KEY"
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      code: "INTERNAL_ERROR"
+    });
+  }
+};
 export const listTickets = async (req, res) => {
   try {
     const {
@@ -236,3 +328,5 @@ export const previewTicketKey = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
+

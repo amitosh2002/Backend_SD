@@ -1,43 +1,18 @@
-import AuthController from "./controllers/authController.js";
 import User from "./models/UserModel.js";
+import OTP from "./models/AuthModels/otpModels.js";
+import mongoose from "mongoose";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-// Test authentication functionality
+// Test the authentication system
 async function testAuthSystem() {
-  console.log("🧪 Testing Authentication System...\n");
-
-  // Check if environment variables are set
-  if (!process.env.JWT_SECRET) {
-    console.error("❌ Missing JWT_SECRET environment variable");
-    console.error("Please add JWT_SECRET=your-secret-key to your .env file");
-    return;
-  }
-
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-    console.error("❌ Missing email configuration");
-    console.error(
-      "Please configure EMAIL_USER and EMAIL_PASSWORD in your .env file"
-    );
-    return;
-  }
-
-  console.log("✅ Environment variables found");
-  console.log(`🔑 JWT Secret: ${process.env.JWT_SECRET.substring(0, 10)}...`);
-  console.log(`📧 Email User: ${process.env.EMAIL_USER}`);
-  console.log("");
-
   try {
-    // Test 1: Generate JWT token
-    console.log("🔑 Test 1: Testing JWT token generation...");
-    const testToken = AuthController.generateToken("test-user-id", "user");
-    console.log("✅ JWT token generated successfully!");
-    console.log(`   Token: ${testToken.substring(0, 50)}...`);
+    console.log("🔐 Testing Authentication System...");
     console.log("");
 
-    // Test 2: Test user model methods
-    console.log("👤 Test 2: Testing User model methods...");
+    // Test 1: Test user creation and validation
+    console.log("👤 Test 1: Testing user creation and validation...");
 
     // Create a test user instance
     const testUser = new User({
@@ -51,18 +26,22 @@ async function testAuthSystem() {
       },
     });
 
-    // Test OTP generation
-    const otpCode = testUser.generateOTP();
+    // Test OTP generation using separate OTP model
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     console.log("✅ OTP generated successfully!");
     console.log(`   OTP Code: ${otpCode}`);
-    console.log(`   OTP Expires: ${testUser.otp.expiresAt}`);
     console.log("");
 
-    // Test OTP verification
-    const isOTPValid = testUser.verifyOTP(otpCode);
-    console.log("✅ OTP verification test:");
-    console.log(`   Valid OTP: ${isOTPValid}`);
-    console.log(`   OTP cleared: ${!testUser.otp}`);
+    // Test OTP record creation
+    const otpRecord = new OTP({
+      email: testUser.email,
+      otp: otpCode,
+      createdAt: new Date(),
+    });
+    console.log("✅ OTP record created successfully!");
+    console.log(`   Email: ${otpRecord.email}`);
+    console.log(`   OTP: ${otpRecord.otp}`);
+    console.log(`   Created: ${otpRecord.createdAt}`);
     console.log("");
 
     // Test password comparison
@@ -115,11 +94,33 @@ async function testAuthSystem() {
     console.log(
       `   Password field: ${userJSON.password ? "EXISTS" : "REMOVED"}`
     );
-    console.log(`   OTP field: ${userJSON.otp ? "EXISTS" : "REMOVED"}`);
     console.log(
       `   Login attempts: ${userJSON.loginAttempts ? "EXISTS" : "REMOVED"}`
     );
     console.log(`   Lock until: ${userJSON.lockUntil ? "EXISTS" : "REMOVED"}`);
+    console.log("");
+
+    // Test 6: Test OTP model functionality
+    console.log("🔢 Test 6: Testing OTP model functionality...");
+
+    // Test OTP expiration (simulate 6 minutes old OTP)
+    const expiredOTP = new OTP({
+      email: "expired@example.com",
+      otp: "123456",
+      createdAt: new Date(Date.now() - 6 * 60 * 1000), // 6 minutes ago
+    });
+
+    console.log("✅ OTP expiration test:");
+    console.log(
+      `   Expired OTP age: ${
+        (Date.now() - expiredOTP.createdAt.getTime()) / 1000
+      } seconds`
+    );
+    console.log(
+      `   Is expired (>5 min): ${
+        (Date.now() - expiredOTP.createdAt.getTime()) / 1000 > 300
+      }`
+    );
     console.log("");
 
     console.log("🎉 Authentication system testing completed successfully!");

@@ -284,7 +284,7 @@ const sendVerificationOTP = async (to, userData, otpCode) => {
   const subject = "Account Verification - Hora";
 
   const templateData = {
-    user_name: userData.firstName || userData.username,
+    // user_name: userData.firstName || userData.username,
     otp_code: otpCode,
     expiry_time: "10 minutes",
     verification_url: `${

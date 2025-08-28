@@ -191,11 +191,9 @@ const TicketSchema = new mongoose.Schema(
       },
       default: "BACKLOG",
     },
-    description: {
-      type: String,
+      description: {
+      type: mongoose.Schema.Types.Mixed, // Allows any type, including objects
       required: false,
-      trim: true,
-      maxlength: [5000, "Description cannot exceed 5000 characters"],
     },
     reporter: {
       type: String,
@@ -203,7 +201,7 @@ const TicketSchema = new mongoose.Schema(
       trim: true,
     },
     assignee: {
-      type: String,
+      type: Object,
       required: false,
       trim: true,
     },
