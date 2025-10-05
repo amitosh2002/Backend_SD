@@ -1,105 +1,3 @@
-// import mongoose from "mongoose";
-// import { CounterModel } from "./CounterModels.js";
-
-// function slugifyTitle(input) {
-//   return String(input || "")
-//     .toLowerCase()
-//     .replace(/[^a-z0-9]+/g, "-")
-//     .replace(/(^-|-$)/g, "");
-// }
-
-// const TicketSchema = new mongoose.Schema(
-//   {
-//     title: {
-//       type: String,
-//       required: true,
-//       trim: true,
-//     },
-//     type: {
-//       type: String,
-//       required: true,
-//       trim: true,
-//       uppercase: true,
-//     },
-//     sequenceNumber: {
-//       type: Number,
-//       required: false,
-//       index: true,
-//     },
-//     ticketKey: {
-//       type: String,
-//       required: false,
-//       unique: true,
-//       index: true,
-//     },
-//     priority: {
-//       type: String,
-//       required: false,
-//       trim: true,
-//     },
-//     reporter: {
-//       type: String,
-//       required: false,
-//       trim: true,
-//     },
-//     assignee: {
-//       type: String,
-//       required: false,
-//       trim: true,
-//     },
-//     branch: {
-//       type: Object,
-//       required: false,
-//     },
-//     timeLogs: [
-//       {
-//         minutes: { type: Number, required: true, min: 0 },
-//         note: { type: String, required: false, trim: true },
-//         at: { type: Date, default: Date.now },
-//       },
-//     ],
-//     storyPoint: {
-//       type: Number,
-//       required: false,
-//     },
-//     reviewDocument: {
-//       type: Object,
-//       required: false,
-//     },
-//     ticketLog: {
-//       type: Object,
-//       required: false,
-//     },
-//   },
-//   { timestamps: true }
-// );
-
-// TicketSchema.pre("validate", async function assignSequenceAndKey(next) {
-//   try {
-//     if (!this.isNew) return next();
-//     if (!this.type) return next(new Error("Ticket type is required"));
-//     if (!this.title) return next(new Error("Ticket title is required"));
-
-//     // If already set (e.g., during migration), skip
-//     if (this.sequenceNumber && this.ticketKey) return next();
-
-//     const counter = await CounterModel.findByIdAndUpdate(
-//       this.type,
-//       { $inc: { seq: 1 } },
-//       { new: true, upsert: true }
-//     );
-
-//     this.sequenceNumber = counter.seq;
-//     const padded = String(this.sequenceNumber);
-//     this.ticketKey = `${this.type}-${padded}-${slugifyTitle(this.title)}`;
-//     return next();
-//   } catch (err) {
-//     return next(err);
-//   }
-// });
-
-// export const TicketModel = mongoose.model("Ticket", TicketSchema);
-
 import mongoose from "mongoose";
 import { CounterModel } from "./CounterModels.js";
 
@@ -131,6 +29,19 @@ const TICKET_TYPES = [
   "LIVEOPS",
   "PLAT",
 ];
+const ENUMS =[
+  "OPEN",
+    "IN_PROGRESS",
+    "IN_REVIEW",
+    "DEV TESTING",
+    "RESOLVED",
+    "M1 TESTING COMPLETED",
+    "M2 TESTING COMPLETED",
+    "REJECTED",
+    "ON_HOLD",
+    "REOPENED",
+    "CLOSED",
+]
 
 const TicketSchema = new mongoose.Schema(
   {
@@ -179,23 +90,14 @@ const TicketSchema = new mongoose.Schema(
       required: false,
       trim: true,
       enum: {
-        values: [
-          "BACKLOG",
-          "TODO",
-          "IN_PROGRESS",
-          "IN_REVIEW",
-          "TESTING",
-          "DONE",
-        ],
+        values:ENUMS,
         message: "Invalid status",
       },
-      default: "BACKLOG",
+      default: "OPEN",
     },
-    description: {
-      type: String,
+      description: {
+      type: mongoose.Schema.Types.Mixed, // Allows any type, including objects
       required: false,
-      trim: true,
-      maxlength: [5000, "Description cannot exceed 5000 characters"],
     },
     reporter: {
       type: String,
@@ -203,7 +105,7 @@ const TicketSchema = new mongoose.Schema(
       trim: true,
     },
     assignee: {
-      type: String,
+      type: Object,
       required: false,
       trim: true,
     },
@@ -219,7 +121,12 @@ const TicketSchema = new mongoose.Schema(
       },
       required: false,
     },
-    timeLogs: [
+    totalTimeLogged: {
+        type: Number,
+        default: 0,
+        min: [0, "Total time cannot be negative"],
+      },
+    timeLogs:[
       {
         minutes: {
           type: Number,
@@ -286,11 +193,6 @@ const TicketSchema = new mongoose.Schema(
     toObject: { virtuals: true },
   }
 );
-
-// Virtual for total time logged
-TicketSchema.virtual("totalTimeLogged").get(function () {
-  return this.timeLogs.reduce((total, log) => total + log.minutes, 0);
-});
 
 // Virtual for ticket age in days
 TicketSchema.virtual("ageInDays").get(function () {
@@ -382,6 +284,8 @@ TicketSchema.statics.findByFilters = function (filters = {}) {
 
   return this.find(query).sort({ createdAt: -1 });
 };
+
+
 
 export const TicketModel = mongoose.model("Ticket", TicketSchema);
 

@@ -5,6 +5,7 @@ import User from "../models/UserModel.js";
 export const authenticateToken = async (req, res, next) => {
   try {
     const authHeader = req.headers["authorization"];
+    
     const token = authHeader && authHeader.split(" ")[1]; // Bearer TOKEN
 
     if (!token) {
@@ -161,6 +162,25 @@ export const otpRateLimit = (() => {
   const windowMs = 60 * 1000; // 1 minute
   const maxAttempts = 3; // Max 3 OTP requests per minute
 
+  // Clean up expired attempts periodically
+  const cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [ip, attemptData] of attempts.entries()) {
+      if (now > attemptData.resetTime) {
+        attempts.delete(ip);
+      }
+    }
+  }, 5 * 60 * 1000); // Clean up every 5 minutes
+
+  // Clear interval when process exits
+  process.on("SIGINT", () => {
+    clearInterval(cleanupInterval);
+  });
+
+  process.on("SIGTERM", () => {
+    clearInterval(cleanupInterval);
+  });
+
   return (req, res, next) => {
     const ip = req.ip || req.connection.remoteAddress;
     const now = Date.now();
@@ -168,33 +188,23 @@ export const otpRateLimit = (() => {
     if (!attempts.has(ip)) {
       attempts.set(ip, { count: 1, resetTime: now + windowMs });
     } else {
-      const attempt = attempts.get(ip);
+      const attemptData = attempts.get(ip);
 
-      if (now > attempt.resetTime) {
+      if (now > attemptData.resetTime) {
         // Reset window
-        attempt.count = 1;
-        attempt.resetTime = now + windowMs;
-      } else if (attempt.count >= maxAttempts) {
+        attemptData.count = 1;
+        attemptData.resetTime = now + windowMs;
+      } else if (attemptData.count >= maxAttempts) {
         return res.status(429).json({
           success: false,
           message:
             "Too many OTP requests. Please wait before requesting another.",
         });
       } else {
-        attempt.count++;
+        attemptData.count++;
       }
     }
 
     next();
   };
 })();
-
-// Clean up expired attempts periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, attempt] of attempts.entries()) {
-    if (now > attempt.resetTime) {
-      attempts.delete(ip);
-    }
-  }
-}, 5 * 60 * 1000); // Clean up every 5 minutes

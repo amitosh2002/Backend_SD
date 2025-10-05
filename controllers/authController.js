@@ -1,4 +1,6 @@
 import User from "../models/UserModel.js";
+import OTP from "../models/AuthModels/otpModels.js";
+import TokenModel from "../models/AuthModels/tokenModel.js";
 import jwt from "jsonwebtoken";
 import {
   sendVerificationOTP,
@@ -16,10 +18,107 @@ const generateToken = (userId, role) => {
   );
 };
 
+// Helper function to generate OTP code
+const generateOTPCode = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+// Helper to persist token session
+const persistTokenSession = async (user, token, req) => {
+  try {
+    const decoded = jwt.decode(token);
+    const expiresAt = decoded && decoded.exp ? new Date(decoded.exp * 1000) : undefined;
+    
+    // Check if user exists
+    const checkUser = await User.findById(user._id);
+    
+    if (checkUser) {
+      // Check if a token session already exists for this user
+      const existingToken = await TokenModel.findOne({ 
+        user: user._id, 
+        isRevoked: false 
+      });
+      
+      if (existingToken) {
+        // Update existing token session
+        await TokenModel.findOneAndUpdate(
+          { user: user._id, isRevoked: false },
+          {
+            token,
+            ip: req.ip || req.headers["x-forwarded-for"],
+            userAgent: req.headers["user-agent"],
+            expiresAt,
+          },
+          { new: true }
+        );
+      } else {
+        // Create new token session
+        await TokenModel.create({
+          user: user._id,
+          token,
+          isRevoked: false,
+          ip: req.ip || req.headers["x-forwarded-for"],
+          userAgent: req.headers["user-agent"],
+          expiresAt,
+        });
+      }
+    } else {
+      throw new Error("User not found");
+    }
+  } catch (err) {
+    console.error("Failed to persist token session:", err);
+    throw err; // Re-throw to handle in calling function
+  }
+};
+// Helper function to create OTP record
+const createOTPRecord = async (email, otpCode) => {
+  // Remove any existing OTP for this email
+  await OTP.deleteMany({ email });
+
+  // Create new OTP record
+  const otpRecord = new OTP({
+    email,
+    otp: otpCode,
+    createdAt: new Date(),
+  });
+
+  return await otpRecord.save();
+};
+
+// Helper function to verify OTP
+const verifyOTPRecord = async (email, otpCode) => {
+  const otpRecord = await OTP.findOne({ email, otp: otpCode });
+
+  if (!otpRecord) {
+    return false;
+  }
+
+  // Check if OTP is expired (5 minutes from creation)
+  const now = new Date();
+  const otpAge = (now - otpRecord.createdAt) / 1000; // in seconds
+
+  if (otpAge > 300) {
+    // 5 minutes = 300 seconds
+    // Delete expired OTP
+    await OTP.deleteOne({ _id: otpRecord._id });
+    return false;
+  }
+
+  // Delete used OTP
+  await OTP.deleteOne({ _id: otpRecord._id });
+  return true;
+};
+
 // User registration
 const register = async (req, res) => {
   try {
-    const { username, email, password, phone, firstName, lastName } = req.body;
+      const { data } = req.body;
+      if (!data) {
+        return res.status(400).json({ message: "Invalid request body" });
+      }
+
+      const { username, email, password, phone, firstName, lastName } = data;
+    console.log(req.body,"body for register")
 
     // Check if user already exists
     const existingUser = await User.findOne({
@@ -43,8 +142,13 @@ const register = async (req, res) => {
     });
 
     // Generate OTP for verification
-    const otpCode = user.generateOTP();
+    const otpCode = generateOTPCode();
+
+    // Save user first
     await user.save();
+
+    // Create OTP record
+    await createOTPRecord(email, otpCode);
 
     // Send verification email
     try {
@@ -88,6 +192,7 @@ const register = async (req, res) => {
 const sendLoginOTP = async (req, res) => {
   try {
     const { email } = req.body;
+    console.log("email", email);
 
     if (!email) {
       return res.status(400).json({
@@ -96,42 +201,18 @@ const sendLoginOTP = async (req, res) => {
       });
     }
 
-    // Find user by email
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    if (user.isLocked()) {
-      return res.status(423).json({
-        success: false,
-        message:
-          "Account is temporarily locked due to multiple failed attempts. Please try again later.",
-      });
-    }
-
-    if (!user.isActive) {
-      return res.status(423).json({
-        success: false,
-        message: "Account is deactivated. Please contact support.",
-      });
-    }
-
     // Generate new OTP
-    const otpCode = user.generateOTP();
-    await user.save();
+    const otpCode = generateOTPCode();
+
+    // Create OTP record
+    await createOTPRecord(email, otpCode);
 
     // Send OTP email
     try {
       await sendVerificationOTP(
         email,
         {
-          firstName: user.profile.firstName,
-          username: user.username,
-          email: user.email,
+          email: email,
         },
         otpCode
       );
@@ -146,7 +227,7 @@ const sendLoginOTP = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "OTP sent successfully to your email",
-      email: user.email,
+      email: email,
     });
   } catch (error) {
     console.error("Send OTP error:", error);
@@ -170,14 +251,28 @@ const verifyOTPAndLogin = async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({
+    // First verify the OTP regardless of user existence
+    if (!(await verifyOTPRecord(email, otp))) {
+      return res.status(400).json({
         success: false,
-        message: "User not found",
+        message: "Invalid or expired OTP",
       });
     }
 
+    const user = await User.findOne({ email });
+
+    // If user doesn't exist, send response with redirect flag
+    if (!user) {
+      console.log("User not found - redirecting to registration");
+      return res.status(200).json({
+        success: true,
+        message: "OTP verified successfully",
+        requiresRegistration: true,
+        email: email,
+      });
+    }
+
+    // User exists - proceed with login checks
     if (user.isLocked()) {
       return res.status(423).json({
         success: false,
@@ -193,23 +288,21 @@ const verifyOTPAndLogin = async (req, res) => {
       });
     }
 
-    if (!user.verifyOTP(otp)) {
-      await user.incLoginAttempts();
-      return res.status(400).json({
-        success: false,
-        message: "Invalid or expired OTP",
-      });
-    }
-
+    // Reset login attempts and update last login
     await user.resetLoginAttempts();
     user.lastLogin = new Date();
     await user.save();
 
     const token = generateToken(user._id, user.role);
 
+    // Persist the token session
+    await persistTokenSession(user, token, req);
+
+    // User exists and login successful
     res.status(200).json({
       success: true,
       message: "Login successful",
+      requiresRegistration: false,
       token,
       user: {
         id: user._id,
@@ -245,6 +338,26 @@ const resendVerificationOTP = async (req, res) => {
 
     const user = await User.findOne({ email });
     if (!user) {
+      console.log("User not found - redirecting to registration");
+      // Generate new OTP
+      const otpCode = generateOTPCode();
+      await sendVerificationOTP(
+        email,
+        {
+          email: email,
+        },
+        otpCode
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "OTP verified successfully",
+        requiresRegistration: true,
+        email: email,
+      });
+    }
+
+    if (!user) {
       return res.status(404).json({
         success: false,
         message: "User not found",
@@ -258,8 +371,11 @@ const resendVerificationOTP = async (req, res) => {
       });
     }
 
-    const otpCode = user.generateOTP();
-    await user.save();
+    // Generate new OTP
+    const otpCode = generateOTPCode();
+
+    // Create OTP record
+    await createOTPRecord(email, otpCode);
 
     try {
       await sendVerificationOTP(
@@ -320,7 +436,8 @@ const verifyAccount = async (req, res) => {
       });
     }
 
-    if (!user.verifyOTP(otp)) {
+    // Verify OTP using OTP model
+    if (!(await verifyOTPRecord(email, otp))) {
       return res.status(400).json({
         success: false,
         message: "Invalid or expired OTP",
@@ -506,8 +623,8 @@ const forgotPassword = async (req, res) => {
       });
     }
 
-    const otpCode = user.generateOTP();
-    await user.save();
+    const otpCode = generateOTPCode();
+    await createOTPRecord(email, otpCode);
 
     try {
       await sendPasswordResetOTP(
@@ -568,7 +685,8 @@ const resetPassword = async (req, res) => {
       });
     }
 
-    if (!user.verifyOTP(otp)) {
+    // Verify OTP using OTP model
+    if (!(await verifyOTPRecord(email, otp))) {
       return res.status(400).json({
         success: false,
         message: "Invalid or expired OTP",
@@ -592,15 +710,27 @@ const resetPassword = async (req, res) => {
   }
 };
 
-// Logout (client-side token removal)
+// Logout - revoke current token
 const logout = async (req, res) => {
   try {
-    // In a stateless JWT system, logout is handled client-side
-    // You can implement token blacklisting here if needed
-    res.status(200).json({
-      success: true,
-      message: "Logged out successfully",
-    });
+    const authHeader = req.headers["authorization"];
+    const token = authHeader && authHeader.split(" ")[1];
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: "Token required" });
+    }
+
+    const session = await TokenModel.findOneAndUpdate(
+      { token },
+      { $set: { isRevoked: true } },
+      { new: true }
+    );
+
+    if (!session) {
+      return res.status(200).json({ success: true, message: "Logged out" });
+    }
+
+    return res.status(200).json({ success: true, message: "Logged out" });
   } catch (error) {
     console.error("Logout error:", error);
     res.status(500).json({
@@ -608,6 +738,58 @@ const logout = async (req, res) => {
       message: "Logout failed",
       error: error.message,
     });
+  }
+};
+
+// Fetch user details by token
+const getUserByToken = async (req, res) => {
+  try {
+    const token = req.body.token || (req.headers["authorization"] && req.headers["authorization"].split(" ")[1]);
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: "Token required" });
+    }
+
+    // Verify JWT
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET || "your-secret-key");
+    } catch (e) {
+      return res.status(401).json({ success: false, message: "Invalid token" });
+    }
+
+    // Ensure token is not revoked
+    const session = await TokenModel.findOne({ token, isRevoked: false }).populate("user");
+    if (!session) {
+      return res.status(401).json({ success: false, message: "Session revoked or not found" });
+    }
+
+    const user = session.user;
+    return res.status(200).json({
+      success: true,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        isVerified: user.isVerified,
+        profile: user.profile,
+        lastLogin: user.lastLogin,
+        createdAt: user.createdAt,
+      },
+      session: {
+        token: session.token,
+        isRevoked: session.isRevoked,
+        ip: session.ip,
+        userAgent: session.userAgent,
+        createdAt: session.createdAt,
+        expiresAt: session.expiresAt,
+      },
+    });
+  } catch (error) {
+    console.error("Get user by token error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch user", error: error.message });
   }
 };
 
@@ -624,4 +806,5 @@ export {
   forgotPassword,
   resetPassword,
   logout,
+  getUserByToken,
 };
