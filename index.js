@@ -35,7 +35,7 @@ app.use(
     },
      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
         // 💡 ADDITION: Allow common headers needed for authentication and content type
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Custom-Token'], 
+    allowedHeaders: ['Content-Type', 'Authorization', 'authorization','X-Custom-Token'], 
     
     // Allow credentials (cookies/auth headers) to be sent
     credentials: true,
