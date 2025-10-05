@@ -23,7 +23,7 @@ app.use(express.json());
 // cors
 const allowedOrigins = [
   "http://localhost:5173",
-  "http://sd-tracking.onrender.com",
+  "https://sd-tracking.onrender.com",
 ];
 app.use(
   cors({
@@ -33,6 +33,11 @@ app.use(
       }
       return callback(new Error("Not allowed by CORS"));
     },
+     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+        // 💡 ADDITION: Allow common headers needed for authentication and content type
+    allowedHeaders: ['Content-Type', 'Authorization', 'authorization','X-Custom-Token'], 
+    
+    // Allow credentials (cookies/auth headers) to be sent
     credentials: true,
   })
 );
