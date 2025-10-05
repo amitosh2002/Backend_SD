@@ -8,6 +8,8 @@ import emailRoutes from "./routes/emailRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import cors from "cors";
 import keyValueRoute from "./routes/keyValuePairRoutes.js";
+import githubrouter from "./routes/Github/githubreporoutes.js";
+
 // import { MongoClient } from 'mongodb';
 // import bodyParser from 'body-parser';
 // import dotenv from 'dotenv';
@@ -79,8 +81,9 @@ app.use("/api/platform", ticketRoutes); // ticket routes
 app.use("/api/email", emailRoutes); // email routes
 app.use("/api/auth", authRoutes); // authentication routes
 //key value pair routes
-app.use("/api/platform/key-value-pairs", keyValueRoute);
-
+app.use("/api/platform", keyValueRoute);
+// for github intregation 
+app.use("/api/gihub-repo",githubrouter)
 app.get("/server", (req, res) => {
   res.send("Hello World!");
 });

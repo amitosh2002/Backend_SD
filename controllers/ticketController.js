@@ -196,20 +196,63 @@ export const updateTicket = async (req, res) => {
   }
 };
 
+// Assuming TicketModel is imported
 export const addTimeLog = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { minutes, note, loggedBy } = req.body;
-    if (minutes == null || minutes < 0) {
-      return res.status(400).json({ message: "'minutes' must be >= 0" });
+ 
+    const { 
+      ticketId,        // The ID of the ticket to update
+      durationSeconds, // The total time logged, in seconds (from client conversion)
+      note,            // The description of the work
+      loggedBy         // The ID or name of the user logging the time
+    } = req.body;
+
+    // --- Input Validation ---
+    
+    // Check for required fields
+    if (!ticketId || durationSeconds == null || !loggedBy) {
+      return res.status(400).json({ 
+        message: "Missing required fields: ticketId, durationSeconds, or loggedBy." 
+      });
     }
-    const updated = await TicketModel.findByIdAndUpdate(
-      id,
-      { $push: { timeLogs: { minutes, note, loggedBy } } },
+
+    // Check for valid duration (must be a non-negative number)
+    if (typeof durationSeconds !== 'number' || durationSeconds < 0) {
+      // Adjusted the validation to match the new durationSeconds field
+      return res.status(400).json({ 
+        message: "'durationSeconds' must be a non-negative number." 
+      });
+    }
+    
+    // Convert seconds back to minutes for your existing schema (if 'minutes' is still the field name)
+    // If you intend to store seconds, you must update your Mongoose subdocument schema.
+    const durationMinutes = Math.round(durationSeconds / 60);
+
+    // 2. Update the Ticket Document
+    const updatedTicket = await TicketModel.findByIdAndUpdate(
+      ticketId,
+      { 
+        $push: { 
+          timeLogs: { 
+            // 💡 Using durationMinutes to fit your original schema field 'minutes'
+            minutes: durationMinutes, 
+            note, 
+            loggedBy 
+          } 
+        } ,
+         $inc: { totalTimeLogged: durationMinutes } // Targets the new top-level field
+      },
       { new: true, runValidators: true }
     );
-    if (!updated) return res.status(404).json({ message: "Ticket not found" });
-    return res.status(200).json(updated);
+
+    // 3. Handle Not Found
+    if (!updatedTicket) {
+      return res.status(404).json({ message: `Ticket with ID ${ticketId} not found.` });
+    }
+
+    // 4. Success Response
+    return res.status(200).json(updatedTicket);
+    
   } catch (err) {
     console.error("Error adding time log:", err);
     return res.status(500).json({ message: "Internal server error" });
@@ -233,21 +276,45 @@ export const setStatus = async (req, res) => {
   }
 };
 
+// Assuming TicketModel and User model are imported
 export const setAssignee = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { assignee } = req.body;
-    const updated = await TicketModel.findByIdAndUpdate(
-      id,
-      { assignee },
-      { new: true, runValidators: true }
-    );
-    if (!updated) return res.status(404).json({ message: "Ticket not found" });
-    return res.status(200).json(updated);
-  } catch (err) {
-    console.error("Error setting assignee:", err);
-    return res.status(500).json({ message: "Internal server error" });
-  }
+    try {
+        const ticketId = req.params.id;
+        const  {userId}  = req.body;
+        console.log(userId,"dfvgbh")
+        // ... (Input Validation remains the same) ...
+        if (!userId || !ticketId) {
+            return res.status(400).json({ success: false, message: "Missing ticket ID or user ID (assignee)." });
+        }
+
+        // --- Find Assignee Details ---
+        const assigneeDetails = await User.findById(userId);
+
+        if (!assigneeDetails) {
+            return res.status(404).json({ success: false, message: `User with ID ${userId} not found.` });
+        }
+
+        // 💡 FIX 2: Check the property on the User model. It's usually '_id' for reference.
+        // Assuming your TicketModel 'assignee' field is of type { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+        const updatedTicket = await TicketModel.findByIdAndUpdate(
+            ticketId,
+            { 
+                // 💡 CRITICAL FIX: Save the user's MongoDB ID for proper referencing/population
+                assignee: assigneeDetails.username 
+            },
+            { new: true, runValidators: true }
+        );
+
+        if (!updatedTicket) {
+            return res.status(404).json({ success: false, message: `Ticket with ID ${ticketId} not found.` });
+        }
+        
+        // Success
+        return res.status(200).json({ success: true, ticket: updatedTicket });
+    } catch (err) {
+        console.error("Error setting assignee:", err);
+        return res.status(500).json({ success: false, message: "Internal server error" });
+    }
 };
 
 export const setPriority = async (req, res) => {

@@ -92,30 +92,51 @@ const TICKET_TYPES = [
   "PLAT",
 ];
 
-const icons=[
+const Ticket_Types=[
     {
         type:"Bug",
-        link:"https://res.cloudinary.com/duzffecme/image/upload/v1756308073/bug_wtl3z3.svg"
+        icon:"https://res.cloudinary.com/duzffecme/image/upload/v1756308073/bug_wtl3z3.svg"
     },
     {
         type:"task",
-        link:"https://res.cloudinary.com/duzffecme/image/upload/v1756308395/taskIcon_kps7f4.svg"
+        icon:"https://res.cloudinary.com/duzffecme/image/upload/v1756308395/taskIcon_kps7f4.svg"
     
     },
     {
         type:"Arch",
-        link:"https://res.cloudinary.com/duzffecme/image/upload/v1756308633/architecture-svgrepo-com_ml0sbh.svg"
+        icon:"https://res.cloudinary.com/duzffecme/image/upload/v1756308633/architecture-svgrepo-com_ml0sbh.svg"
     },
     {
         type:"subTask",
-        link:"https://res.cloudinary.com/duzffecme/image/upload/v1756308807/tick-square-svgrepo-com_jhbphs.svg"
+        icon:"https://res.cloudinary.com/duzffecme/image/upload/v1756308807/tick-square-svgrepo-com_jhbphs.svg"
     }
 ]
-
-export const listTicketTypes = (req, res) => {
-    if (TICKET_TYPES.length === 0) {
-    return res.status(404).json({ message: "No ticket types found" });
+const ticket_statuses = [
+  "OPEN",
+  "IN_PROGRESS",
+  "RESOLVED",
+  "CLOSED",
+  "REOPENED",
+  "Dev Testing",
+  "QA Testing",
+  "READY_FOR_DEPLOYMENT",
+  "DEPLOYED",
+  "ON_HOLD",
+  "IN_REVIEW",
+  "APPROVED",
+  "REJECTED",
+  "CANCELLED",
+  "M1 TESTING COMPLETED",
+  "M2 TESTING COMPLETED",
+]  
+export const platformKeyValuesPairs = (req, res) => {``
+    if (Ticket_Types.length === 0 || ticket_statuses .length === 0) {
+    return res.status(404).json({ message: "No ticket types found or No ticket statuses found" });
     }
+    res.status(200).json(
+      { ticketTypes: Ticket_Types, ticketStatuses: ticket_statuses }
+    );
+    //
     
   return res.status(200).json(TICKET_TYPES);
 }
