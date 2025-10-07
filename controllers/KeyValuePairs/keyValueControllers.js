@@ -117,7 +117,7 @@ const ticket_statuses = [
   "RESOLVED",
   "CLOSED",
   "REOPENED",
-  "Dev TESTING",
+  "DEV_TESTING",
   "QA TESTING",
   "READY_FOR_DEPLOYMENT",
   "DEPLOYED",

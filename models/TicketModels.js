@@ -41,6 +41,7 @@ const ENUMS =[
     "ON_HOLD",
     "REOPENED",
     "CLOSED",
+     null 
 ]
 
 const TicketSchema = new mongoose.Schema(

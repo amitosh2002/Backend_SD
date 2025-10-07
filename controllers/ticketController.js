@@ -59,16 +59,19 @@ export const createTicketV2 = async (req, res) => {
         code: "MISSING_REQUIRED_FIELDS"
       });
     }
-
+   let priority = ticketData?.priority.toUpperCase();
+    console.log(priority)
     // Optional: Sanitize and set defaults
     const sanitizedData = {
-      ...ticketData,
       // Set defaults if not provided
-      priority: ticketData.priority || 'MEDIUM',
-      status: ticketData.status || 'BACKLOG',
+      title:ticketData?.title,
+      description:ticketData?.description,
+      type:ticketData?.type?.type,
+      priority: priority || 'MEDIUM',
+     status: ticketData?.status || 'OPEN',
       // Add reporter from authenticated user if not provided
-      reporter: ticketData.reporter  || user?.username,
-      assignee: ticketData.assignee || "Unassigned",
+      reporter: ticketData?.reporter  || user?.username,
+      assignee: ticketData?.assignee || "Unassigned",
       // Add timestamps
       createdBy: user?.userId,
       // Remove any undefined or null values
