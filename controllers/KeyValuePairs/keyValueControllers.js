@@ -129,14 +129,13 @@ const ticket_statuses = [
   "M1 TESTING COMPLETED",
   "M2 TESTING COMPLETED",
 ]  
-export const platformKeyValuesPairs = (req, res) => {``
-    if (Ticket_Types.length === 0 || ticket_statuses .length === 0) {
-    return res.status(404).json({ message: "No ticket types found or No ticket statuses found" });
+export const platformKeyValuesPairs = (req, res) => {
+    if (Ticket_Types.length === 0 || ticket_statuses.length === 0) {
+        return res.status(404).json({ message: "No ticket types found or No ticket statuses found" });
     }
-    res.status(200).json(
-      { ticketTypes: Ticket_Types, ticketStatuses: ticket_statuses }
-    );
-    //
     
-  return res.status(200).json(TICKET_TYPES);
-}
+    return res.status(200).json({
+        ticketTypes: Ticket_Types, 
+        ticketStatuses: ticket_statuses 
+    });
+};
