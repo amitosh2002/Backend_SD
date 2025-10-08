@@ -741,6 +741,56 @@ const logout = async (req, res) => {
   }
 };
 
+// Validate token
+const validateToken = async (req, res) => {
+  try {
+    const token = req.body.token || (req.headers["authorization"] && req.headers["authorization"].split(" ")[1]);
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: "Token required" });
+    }
+
+    // Verify JWT
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET || "your-secret-key");
+    } catch (e) {
+      return res.status(401).json({ success: false, message: "Invalid or expired token" });
+    }
+
+    // Ensure token is not revoked
+    const session = await TokenModel.findOne({ token, isRevoked: false }).populate("user");
+    if (!session) {
+      return res.status(401).json({ success: false, message: "Session revoked or not found" });
+    }
+
+    const user = session.user;
+    
+    // Check if user is still active
+    if (!user.isActive) {
+      return res.status(401).json({ success: false, message: "User account is deactivated" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        isVerified: user.isVerified,
+        profile: user.profile,
+        lastLogin: user.lastLogin,
+        createdAt: user.createdAt,
+      }
+    });
+  } catch (error) {
+    console.error("Token validation error:", error);
+    res.status(500).json({ success: false, message: "Token validation failed", error: error.message });
+  }
+};
+
 // Fetch user details by token
 const getUserByToken = async (req, res) => {
   try {
@@ -806,5 +856,6 @@ export {
   forgotPassword,
   resetPassword,
   logout,
+  validateToken,
   getUserByToken,
 };
