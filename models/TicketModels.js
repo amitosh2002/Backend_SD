@@ -33,7 +33,7 @@ const ENUMS =[
   "OPEN",
     "IN_PROGRESS",
     "IN_REVIEW",
-    "DEV TESTING",
+    "DEV_TESTING",
     "RESOLVED",
     "M1 TESTING COMPLETED",
     "M2 TESTING COMPLETED",
