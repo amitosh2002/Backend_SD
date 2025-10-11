@@ -6,7 +6,7 @@ const userSchema = new mongoose.Schema(
     username: {
       type: String,
       required: true,
-      unique: true,
+      // unique: true,
       trim: true,
       minlength: 3,
       maxlength: 30,
@@ -71,7 +71,7 @@ const userSchema = new mongoose.Schema(
 // Index for better query performance
 userSchema.index({ email: 1 });
 userSchema.index({ phone: 1 });
-userSchema.index({ username: 1 });
+// userSchema.index({ username: 1 });
 
 // Virtual for full name
 userSchema.virtual("fullName").get(function () {
