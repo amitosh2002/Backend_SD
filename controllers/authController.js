@@ -110,35 +110,120 @@ const verifyOTPRecord = async (email, otpCode) => {
 };
 
 // User registration
+// const register = async (req, res) => {
+//   try {
+//       const { data } = req.body;
+//       if (!data) {
+//         return res.status(400).json({ message: "Invalid request body" });
+//       }
+
+//       const { username, email, password, phone, firstName, lastName } = data;
+//     console.log(req.body,"body for register")
+
+//     // Check if user already exists
+//     const existingUser = await User.findOne({
+//       $or: [{ email },],
+//     });
+
+//     if (existingUser) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User with this email, username, or phone already exists",
+//       });
+//     }
+
+//     // Create new user
+//     const user = new User({
+//       username,
+//       email,
+//       password,
+//       phone,
+//       profile: { firstName, lastName },
+//     });
+
+//     // Generate OTP for verification
+//     const otpCode = generateOTPCode();
+
+//     // Save user first
+//     await user.save();
+
+//     // Create OTP record
+//     await createOTPRecord(email, otpCode);
+
+//     // Send verification email
+//     try {
+//       await sendVerificationOTP(
+//         email,
+//         {
+//           firstName,
+//           username,
+//           email,
+//         },
+//         otpCode
+//       );
+//     } catch (emailError) {
+//       console.error("Failed to send verification email:", emailError);
+//       // Continue with user creation even if email fails
+//     }
+
+//     res.status(201).json({
+//       success: true,
+//       message:
+//         "User registered successfully. Please check your email for verification code.",
+//       user: {
+//         id: user._id,
+//         username: user.username,
+//         email: user.email,
+//         phone: user.phone,
+//         isVerified: user.isVerified,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Registration error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Registration failed",
+//       error: error.message,
+//     });
+//   }
+// };
 const register = async (req, res) => {
   try {
-      const { data } = req.body;
-      if (!data) {
-        return res.status(400).json({ message: "Invalid request body" });
-      }
+    const { data } = req.body;
+    if (!data) {
+      return res.status(400).json({ message: "Invalid request body" });
+    }
 
-      const { username, email, password, phone, firstName, lastName } = data;
-    console.log(req.body,"body for register")
+    const { username, email, password, phone, firstName, lastName } = data;
+    console.log(req.body, "body for register");
 
-    // Check if user already exists
+    // --- FIX 1: Check if user already exists based on all unique fields ---
     const existingUser = await User.findOne({
       $or: [{ email }, { username }, { phone }],
     });
 
     if (existingUser) {
+      // Provide a more specific error based on what was found
+      let field = '';
+      if (existingUser.email === email) field = 'email';
+      else if (existingUser.username === username) field = 'username';
+      else if (existingUser.phone === phone) field = 'phone number';
+
       return res.status(400).json({
         success: false,
-        message: "User with this email, username, or phone already exists",
+        message: `User with this ${field} already exists.`,
       });
     }
 
-    // Create new user
+    // --- FIX 2: Explicitly set isVerified to false (if not default in schema) ---
     const user = new User({
       username,
       email,
       password,
       phone,
       profile: { firstName, lastName },
+      isVerified: false, // Ensure this is explicitly set if the schema doesn't default
+      // You might also add a 'status: "PENDING_VERIFICATION"' field
     });
 
     // Generate OTP for verification
@@ -150,7 +235,7 @@ const register = async (req, res) => {
     // Create OTP record
     await createOTPRecord(email, otpCode);
 
-    // Send verification email
+    // Send verification email (Error handling kept as is)
     try {
       await sendVerificationOTP(
         email,
@@ -163,19 +248,21 @@ const register = async (req, res) => {
       );
     } catch (emailError) {
       console.error("Failed to send verification email:", emailError);
-      // Continue with user creation even if email fails
+      // We still return success but note the email error internally
     }
 
+    // --- FIX 3: Return success, but the user is NOT yet verified ---
     res.status(201).json({
       success: true,
       message:
-        "User registered successfully. Please check your email for verification code.",
+        "Registration successful. Your account is created but requires verification. Please check your email for the verification code.",
       user: {
         id: user._id,
         username: user.username,
         email: user.email,
         phone: user.phone,
-        isVerified: user.isVerified,
+        // isVerified will be false here, preventing login until OTP route is hit
+        isVerified: user.isVerified, 
       },
     });
   } catch (error) {
