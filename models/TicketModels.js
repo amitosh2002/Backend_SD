@@ -46,6 +46,19 @@ const ENUMS =[
 
 const TicketSchema = new mongoose.Schema(
   {
+
+    //  partnerId: {
+    //     type: mongoose.Schema.Types.ObjectId,
+    //     ref: 'Partner', // Reference your Partner model
+    //     required: [true, "Partner ID is required for the ticket context"],
+    //     index: true,
+    // },
+    // projectId: {
+    //     type: mongoose.Schema.Types.ObjectId,
+    //     ref: 'Project', // Reference your Project model
+    //     required: [true, "Project ID is required for the ticket context"],
+    //     index: true,
+    // },
     title: {
       type: String,
       required: [true, "Ticket title is required"],
@@ -271,6 +284,9 @@ TicketSchema.index({ type: 1, sequenceNumber: 1 }, { unique: true });
 TicketSchema.index({ ticketKey: 1 }, { unique: true, sparse: true });
 TicketSchema.index({ status: 1, priority: 1 });
 TicketSchema.index({ assignee: 1, status: 1 });
+
+// TicketSchema.index({ partnerId: 1, projectId: 1, status: 1 }); // New index for fast queries
+// TicketSchema.index({ assignee: 1, status: 1, partnerId: 1 }); // Improved assignee query
 TicketSchema.index({ createdAt: -1 });
 
 // Static method to get next ticket key preview

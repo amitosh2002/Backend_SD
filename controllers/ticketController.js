@@ -401,3 +401,93 @@ export const previewTicketKey = async (req, res) => {
 };
 
 
+/**
+ * Searches for tickets based on a text query, filtered by optional project/partner context.
+ * Improves performance by only searching when a query is present and using proper indexing.
+ * @param {object} req - Express request object (expects req.query.q, req.query.partnerId, req.query.projectId)
+ * @param {object} res - Express response object
+ */
+export const getTicketByQuery = async (req, res) => {
+    // 1. Destructure and Clean 
+    const { query } = req.query;
+    console.log(req.query,"search query")
+    // const { q, partnerId, projectId } = req.query;
+
+    // Check if the mandatory search term 'q' is missing or empty
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+        return res.status(400).json({ 
+            message: "Search query 'q' is required." 
+        });
+    }
+
+    try {
+        // 2. Build the MongoDB Query Object
+        const mongoQuery = {};
+
+        // A. Full-Text Search Condition ($or)
+        // Ensure the query term is properly escaped for regex if necessary, 
+        // but $regex handles most simple cases.
+        const searchRegex = new RegExp(query, 'i'); 
+
+        mongoQuery.$or = [
+            { title: { $regex: searchRegex } },
+            // Assuming description is string/object. If it's a rich object, full-text indexing is better.
+            { description: { $regex: searchRegex } }, 
+            { ticketKey: { $regex: searchRegex } }
+        ];
+
+        // // B. Hierarchical Filtering (Security/Context)
+        // // CRITICAL: Filter tickets by the required Partner and Project IDs.
+    //  ⁡⁢⁣⁣ // 𝘄𝗵𝗲𝗻 𝗶𝗽𝗮𝗿𝘁𝗻𝗲𝗿 𝗯𝗼𝗮𝗿𝗱 𝗰𝗼𝗺𝗲𝘀 𝘁𝗵𝗲𝗻 𝗶𝘁 𝘄𝗶𝗹𝗹 𝘂𝘀𝗲𝗱⁡
+        // if (partnerId) {
+        //     // Mongoose will automatically cast to ObjectId if the field type is set correctly
+        //     mongoQuery.partnerId = partnerId; 
+        // }
+
+        // if (projectId) {
+        //     mongoQuery.projectId = projectId;
+        // }
+    //  ⁡⁢⁣⁣ // 𝘄𝗵𝗲𝗻 𝗶𝗽𝗮𝗿𝘁𝗻𝗲𝗿 𝗯𝗼𝗮𝗿𝗱 𝗰𝗼𝗺𝗲𝘀 𝘁𝗵𝗲𝗻 𝗶𝘁 𝘄𝗶𝗹𝗹 𝘂𝘀𝗲𝗱⁡
+
+    
+
+        // 3. Execute the Query
+        // Add a .limit() and .skip() for pagination in a production environment
+        const tickets = await TicketModel.find(mongoQuery)
+            .select('ticketKey title status priority partnerId projectId') // Select only essential fields
+            .limit(50) // Prevent fetching too many documents on a broad query
+            .sort({ createdAt: -1 }); // Show latest matches first
+
+        // 4. Handle Results
+        if (!tickets || tickets.length === 0) {
+            return res.status(404).json({ message: "No tickets found matching your search criteria." });
+        }
+
+        // Optionally populate partner/project names if needed by the frontend:
+        /*
+        const populatedTickets = await TicketModel.populate(tickets, [
+            { path: 'partnerId', select: 'name' },
+            { path: 'projectId', select: 'name' }
+        ]);
+        return res.status(200).json(populatedTickets);
+        */
+       const resultTicket = tickets.map(ticket => ({
+        id: ticket._id,
+        ticketKey: ticket.ticketKey,
+        title: ticket.title,
+       }))
+
+        return res.status(200).json({
+          succcess:true,
+          resultTicket:resultTicket,
+          total: resultTicket.length
+        });
+    } catch (err) {
+        console.error("Error getting tickets by query:", err);
+        // Better error message if the ID format is invalid
+        if (err.name === 'CastError') {
+             return res.status(400).json({ message: "Invalid ID format provided for partnerId or projectId." });
+        }
+        return res.status(500).json({ message: "Internal server error." });
+    }
+};
