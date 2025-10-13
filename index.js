@@ -10,6 +10,7 @@ import userRoutes from "./routes/UserRoutes/userRoutes.js"
 import cors from "cors";
 import keyValueRoute from "./routes/keyValuePairRoutes.js";
 import githubrouter from "./routes/Github/githubreporoutes.js";
+import "./cronjs/cronjob.js";
 
 // import { MongoClient } from 'mongodb';
 // import bodyParser from 'body-parser';
