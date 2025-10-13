@@ -45,6 +45,7 @@ export const createTicket = async (req, res) => {
 export const createTicketV2 = async (req, res) => {
   try {
     const ticketData = req.body;
+    console.log(ticketData)
     const userId =req.body.userId;
     const user=await User.findById(userId);
     if(!user){
@@ -94,7 +95,7 @@ export const createTicketV2 = async (req, res) => {
         id: ticket._id,
         ticketKey: ticket.ticketKey,
         title: ticket.title,
-        type: ticket.type,
+        type: ticket?.type,
         status: ticket.status,
         priority: ticket.priority,
         reporter: ticket.reporter,
