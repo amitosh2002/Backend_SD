@@ -1,7 +1,12 @@
 
 
 // controller to create a new project or add a new project
-import {ProjectModel} from '../models/ProjectModels.js';
+// import {ProjectModel} from '../models/ProjectModels.js';
+
+import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
+import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
+
+// import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
 export const createProject = async (req, res) => {
   try {
@@ -92,4 +97,32 @@ export const deleteProject = async (req, res) => {
     }
 }
 
+export const listUserAccessibleProjects = async (req, res) => {
+  const { userId } = req.body;
 
+  try {
+    // Step 1: Get all user access records
+    const userAccessibleProjects = await UserWorkAccess.find({ userId });
+
+    if (!userAccessibleProjects || userAccessibleProjects.length === 0) {
+      return res.status(404).json({ message: "No accessible projects found for this user" });
+    }
+
+    // Step 2: Extract project IDs (string values)
+    const accessProjectIds = userAccessibleProjects
+      .map(access => access.projectId)
+      .filter(Boolean);
+
+    // Step 3: Find projects matching those string IDs
+    const projects = await ProjectModel.find({ projectId: { $in: accessProjectIds } }).lean();
+
+    // Step 4: Send back both access info and project details
+    return res.status(200).json({
+      count: projects.length,
+      projects,
+    });
+  } catch (error) {
+    console.error("Error retrieving user accessible projects:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
