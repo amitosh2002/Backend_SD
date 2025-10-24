@@ -46,6 +46,11 @@ const userSchema = new mongoose.Schema(
       enum: ["user", "admin", "manager"],
       default: "user",
     },
+    accessType: {
+      type: Number,
+      enum: [100, 200, 300], // 100 = Viewer, 200 = Manager, 300 = Admin
+      default: 100,
+    },
     loginAttempts: {
       type: Number,
       default: 0,

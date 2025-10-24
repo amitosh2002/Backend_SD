@@ -47,18 +47,18 @@ const ENUMS =[
 const TicketSchema = new mongoose.Schema(
   {
 
-    //  partnerId: {
-    //     type: mongoose.Schema.Types.ObjectId,
-    //     ref: 'Partner', // Reference your Partner model
-    //     required: [true, "Partner ID is required for the ticket context"],
-    //     index: true,
-    // },
-    // projectId: {
-    //     type: mongoose.Schema.Types.ObjectId,
-    //     ref: 'Project', // Reference your Project model
-    //     required: [true, "Project ID is required for the ticket context"],
-    //     index: true,
-    // },
+     partnerId: {
+        type: String,
+        ref: 'Partner', // Reference your Partner model
+        required: [true, "Partner ID is required for the ticket context"],
+        index: true,
+    },
+    projectId: {
+        type: String,
+        ref: 'Project', // Reference your Project model
+        required: [true, "Project ID is required for the ticket context"],
+        index: true,
+    },
     title: {
       type: String,
       required: [true, "Ticket title is required"],
@@ -71,7 +71,6 @@ const TicketSchema = new mongoose.Schema(
     required: [true, "Ticket type is required"],
     trim: true,
     
-    // 💡 FIX: Use a synchronous setter to guarantee uppercasing
     set: (val) => val ? val.toUpperCase() : val, 
     
     enum: {

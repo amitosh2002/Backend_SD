@@ -1,5 +1,8 @@
 import { TicketModel } from "../models/TicketModels.js";
 import User from "../models/UserModel.js";
+import   {UserWorkAccess} from "../models/PlatformModel/UserWorkAccessModel.js";
+import mongoose from "mongoose";
+import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
 export const createTicket = async (req, res) => {
   try {
@@ -46,10 +49,11 @@ export const createTicketV2 = async (req, res) => {
   try {
     const ticketData = req.body;
     console.log(ticketData)
-    const userId =req.body.userId;
-    const user=await User.findById(userId);
-    if(!user){
-      return res.status(400).json({message:"User not found"});
+    const userId = req.body.userId || (req.user && req.user.userId);
+    if (!userId) return res.status(401).json({ message: 'Missing userId or unauthenticated' });
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(400).json({ message: "User not found" });
     }
 
     // Basic validation
@@ -60,21 +64,22 @@ export const createTicketV2 = async (req, res) => {
         code: "MISSING_REQUIRED_FIELDS"
       });
     }
-   let priority = ticketData?.priority.toUpperCase();
+  let priority = (ticketData?.priority || '').toString().toUpperCase();
     console.log(priority)
     // Optional: Sanitize and set defaults
     const sanitizedData = {
       // Set defaults if not provided
       title:ticketData?.title,
       description:ticketData?.description,
-      type:ticketData?.type?.type,
+      type: ticketData?.type?.type || ticketData?.type,
       priority: priority || 'MEDIUM',
-     status: ticketData?.status || 'OPEN',
+      status: ticketData?.status || 'OPEN',
       // Add reporter from authenticated user if not provided
       reporter: ticketData?.reporter  || user?.username,
       assignee: ticketData?.assignee || "Unassigned",
       // Add timestamps
       createdBy: user?.userId,
+      projectId: ticketData?.projectId,
       // Remove any undefined or null values
     };
 
@@ -86,13 +91,22 @@ export const createTicketV2 = async (req, res) => {
     });
 
     const ticket = new TicketModel(sanitizedData);
+    // If projectId is provided, derive partnerId from the ProjectModel and set it server-side
+    if (sanitizedData.projectId) {
+      const project = await ProjectModel.findOne({ projectId: sanitizedData.projectId }).lean();
+      if (!project) {
+        return res.status(400).json({ success: false, message: 'Invalid projectId provided' });
+      }
+      ticket.partnerId = project.partnerId;
+    }
+
     await ticket.save();
 
     return res.status(201).json({
       success: true,
       message: "Ticket created successfully",
       data: {
-        id: ticket._id,
+  id: ticket._id,
         ticketKey: ticket.ticketKey,
         title: ticket.title,
         type: ticket?.type,
@@ -135,6 +149,7 @@ export const createTicketV2 = async (req, res) => {
     });
   }
 };
+
 export const listTickets = async (req, res) => {
   try {
     const {
@@ -145,26 +160,83 @@ export const listTickets = async (req, res) => {
       priority,
       assignee,
       reporter,
+      userId,
+      projectId,
+      partnerId,
     } = req.query;
+
     const numericLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 200);
     const numericPage = Math.max(parseInt(page, 10) || 1, 1);
 
-    const filters = { type, status, priority, assignee, reporter };
-    const query = TicketModel.findByFilters(filters);
+    // Step 1: Find accepted access
+    const userAccessList = await UserWorkAccess.find({
+      userId,
+      status: "accepted",
+    }).lean();
 
+    // Step 2: Extract and normalize IDs to strings
+    const allowedProjectIds = userAccessList
+      .map((a) => String(a.projectId))
+      .filter(Boolean);
+    const allowedPartnerIds = userAccessList
+      .map((a) => String(a.partnerId))
+      .filter(Boolean);
+
+    // Step 3: Build filters
+    const filters = {};
+
+    // if (type) filters.type = type;
+    if (status) filters.status = status;
+    if (priority) filters.priority = priority;
+    if (assignee) filters.assignee = assignee;
+    if (reporter) filters.reporter = reporter;
+
+    // 🔹 Project filter
+    if (projectId) {
+      if (!allowedProjectIds.includes(String(projectId))) {
+        return res
+          .status(403)
+          .json({ message: "Access denied: no permission for this project." });
+      }
+      filters.projectId = new mongoose.Types.ObjectId(projectId);
+    } else if (allowedProjectIds.length > 0) {
+      filters.projectId = {
+        $in: allowedProjectIds.map((id) => new mongoose.Types.ObjectId(id)),
+      };
+    }
+
+    // 🔹 Partner filter
+    if (partnerId) {
+      if (!allowedPartnerIds.includes(String(partnerId))) {
+        return res
+          .status(403)
+          .json({ message: "Access denied: no permission for this partner." });
+      }
+      filters.partnerId = partnerId;
+    } else if (allowedPartnerIds.length > 0) {
+      filters.partnerId = { $in: allowedPartnerIds };
+    }
+
+    // Step 4: Query tickets
     const [items, total] = await Promise.all([
-      query
+      TicketModel.find(filters)
+        .sort({ createdAt: -1 })
         .skip((numericPage - 1) * numericLimit)
         .limit(numericLimit)
         .lean(),
-      TicketModel.findByFilters(filters).countDocuments(),
+      TicketModel.countDocuments(filters),
     ]);
-
-    return res
-      .status(200)
-      .json({ page: numericPage, limit: numericLimit, total, items });
+    // Step 5: Return response
+    return res.status(200).json({
+      page: numericPage,
+      limit: numericLimit,
+      total,
+      items,
+      accessibleProjects: allowedProjectIds,
+      accessiblePartners: allowedPartnerIds,
+    });
   } catch (err) {
-    console.error("Error listing tickets:", err);
+    console.error("❌ Error listing tickets:", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 };

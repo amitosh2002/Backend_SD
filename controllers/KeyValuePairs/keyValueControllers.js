@@ -109,7 +109,8 @@ const Ticket_Types=[
     {
         type:"subTask",
         icon:"https://res.cloudinary.com/duzffecme/image/upload/v1756308807/tick-square-svgrepo-com_jhbphs.svg"
-    }
+    },
+    
 ]
 const ticket_statuses = [
   "OPEN",
