@@ -387,6 +387,30 @@ const sendBulkEmails = async (recipients, subject, text, html) => {
   }
 };
 
+  const   sendInvitationEmail=async(templateData)=>{
+    // console.log("gff",invitaitonLink,projectName,partnerName,role,"2")
+    try{
+         
+      
+    
+    console.log("templateData in sendInvitationEmail:", templateData);
+    
+    // Compile the template and verify the output
+    const html = compileTemplate("invitationTemplate", templateData);
+    console.log("Compiled HTML template preview (first 200 chars):", html.substring(0, 200));
+       const subject=`Invitation to join ${templateData.partnerName} on Hora`;
+
+      if(!templateData){
+       throw new Error("Invalid template data for invitation email");
+      }
+      // Send both a plain text version and HTML version
+      const plainText =templateData.invitaitonLink;
+      return await sendEmail(templateData.to, subject, plainText, html);
+      
+    }catch(error){
+      console.error("Error in sendInvitationEmail controller:", error);
+    }
+  }
 // Export all functions as named exports
 export {
   sendEmail,
@@ -398,11 +422,13 @@ export {
   sendVerificationOTP,
   sendTicketStatusUpdate,
   sendBulkEmails,
+  sendInvitationEmail
 };
 
 // Also export as default for backward compatibility
 const EmailService = {
   sendEmail,
+  sendInvitationEmail,
   sendWelcomeEmail,
   sendTicketNotification,
   sendProjectAssignment,
