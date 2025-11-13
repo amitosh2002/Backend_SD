@@ -1,6 +1,7 @@
 
 import mongoose from "mongoose";
-import { uuid } from "uuidv4";
+import { v4 as uuidv4 } from "uuid";
+
 // ============================================
 // PARTNER MODEL
 // ============================================
@@ -9,7 +10,7 @@ const Partner = new mongoose.Schema({
         type: String,
         required: true,
         unique: true,
-        default: () => uuid(),  // ✅ Auto-generate UUID
+          default: () => uuidv4(),
 
     },
     partnerCode:{

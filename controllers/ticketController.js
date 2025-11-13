@@ -150,17 +150,18 @@ export const createTicketV2 = async (req, res) => {
   }
 };
 
+
 export const listTickets = async (req, res) => {
   try {
     const {
       page = 1,
       limit = 20,
-      type,
+      type, // Not used in filters yet, but kept for future use
       status,
       priority,
       assignee,
       reporter,
-      userId,
+      userId, // Used for access control, assumed to be available
       projectId,
       partnerId,
     } = req.query;
@@ -169,6 +170,7 @@ export const listTickets = async (req, res) => {
     const numericPage = Math.max(parseInt(page, 10) || 1, 1);
 
     // Step 1: Find accepted access
+    // Note: Assuming UserWorkAccess model and connection are available globally.
     const userAccessList = await UserWorkAccess.find({
       userId,
       status: "accepted",
@@ -182,40 +184,79 @@ export const listTickets = async (req, res) => {
       .map((a) => String(a.partnerId))
       .filter(Boolean);
 
+    // CRITICAL ACCESS CHECK: If the user has no accepted access, they shouldn't see anything.
+    if (allowedProjectIds.length === 0 && allowedPartnerIds.length === 0) {
+        return res.status(200).json({
+            page: numericPage,
+            limit: numericLimit,
+            total: 0,
+            items: [],
+            accessibleProjects: [],
+            accessiblePartners: [],
+        });
+    }
+
     // Step 3: Build filters
     const filters = {};
 
-    // if (type) filters.type = type;
     if (status) filters.status = status;
     if (priority) filters.priority = priority;
     if (assignee) filters.assignee = assignee;
     if (reporter) filters.reporter = reporter;
 
-    // 🔹 Project filter
-    if (projectId) {
-      if (!allowedProjectIds.includes(String(projectId))) {
+    // --- 🔹 Project Filter (Handles mixed UUID/ObjectId) ---
+    const projectIdString = projectId ? String(projectId) : null;
+
+    if (projectIdString) {
+      if (!allowedProjectIds.includes(projectIdString)) {
         return res
           .status(403)
           .json({ message: "Access denied: no permission for this project." });
       }
-      filters.projectId = new mongoose.Types.ObjectId(projectId);
+
+      // Check for ObjectId format to handle legacy/mixed IDs
+      if (projectIdString.length === 24 && mongoose.Types.ObjectId.isValid(projectIdString)) {
+        filters.projectId = new mongoose.Types.ObjectId(projectIdString);
+      } else {
+        // Assume UUID string
+        filters.projectId = projectIdString;
+      }
+      
     } else if (allowedProjectIds.length > 0) {
+      // If no projectId is specified, filter by all allowed projects.
+      const mixedProjectIds = allowedProjectIds.map(id => {
+        if (id.length === 24 && mongoose.Types.ObjectId.isValid(id)) {
+          return new mongoose.Types.ObjectId(id);
+        }
+        return id; // Use as string (UUID)
+      });
+
       filters.projectId = {
-        $in: allowedProjectIds.map((id) => new mongoose.Types.ObjectId(id)),
+           $in: mixedProjectIds,
       };
     }
+    // Note: If allowedProjectIds is empty, tickets are implicitly restricted by the partner filter below.
 
-    // 🔹 Partner filter
-    if (partnerId) {
-      if (!allowedPartnerIds.includes(String(partnerId))) {
+    // --- 🔹 Partner Filter (UUIDs/Strings) ---
+    const partnerIdString = partnerId ? String(partnerId) : null;
+    
+    if (partnerIdString) {
+      if (!allowedPartnerIds.includes(partnerIdString)) {
         return res
           .status(403)
           .json({ message: "Access denied: no permission for this partner." });
       }
-      filters.partnerId = partnerId;
+      filters.partnerId = partnerIdString;
     } else if (allowedPartnerIds.length > 0) {
+      // If no partnerId specified, filter by all allowed partners.
       filters.partnerId = { $in: allowedPartnerIds };
     }
+    // Note: If allowedPartnerIds is empty, filters.partnerId will be undefined.
+    
+    // --- Access Validation Check ---
+    // If the user has access but neither project nor partner filtering criteria were met (highly unlikely 
+    // given the check at the top, but serves as a final safeguard)
+    // You might want to ensure AT LEAST ONE of filters.projectId or filters.partnerId is set if access list is non-empty.
 
     // Step 4: Query tickets
     const [items, total] = await Promise.all([
@@ -226,6 +267,7 @@ export const listTickets = async (req, res) => {
         .lean(),
       TicketModel.countDocuments(filters),
     ]);
+    
     // Step 5: Return response
     return res.status(200).json({
       page: numericPage,
@@ -235,6 +277,7 @@ export const listTickets = async (req, res) => {
       accessibleProjects: allowedProjectIds,
       accessiblePartners: allowedPartnerIds,
     });
+    
   } catch (err) {
     console.error("❌ Error listing tickets:", err);
     return res.status(500).json({ message: "Internal server error" });

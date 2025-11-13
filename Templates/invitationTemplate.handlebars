@@ -218,25 +218,26 @@
             <p class="greeting">Hi there! 👋</p>
             
             <p class="message-text">
-                <span class="highlight">[ADMIN_NAME]</span> has invited you to join their team on <strong>Hora</strong>, 
+                <span class="highlight">{{partnerName}}</span> has invited you to join their team on <strong>Hora</strong>, 
                 a powerful time management and collaboration platform designed to help teams work smarter together.
             </p>
 
             <p class="message-text">
-                You've been invited as a <span class="role-badge">[ROLE]</span>
+                You've been invited as a <span class="role-badge">{{role}}</span> for the project 
+                <span class="highlight">{{projectName}}</span>.
             </p>
 
-            <!-- Personal Message (if provided) -->
+            {{!-- <!-- Personal Message (if provided) -->
             <div class="personal-message">
                 <div class="personal-message-label">Personal Message from [ADMIN_NAME]</div>
                 <p>[PERSONAL_MESSAGE]</p>
-            </div>
+            </div> --}}
 
             <div class="divider"></div>
 
             <!-- CTA Button -->
             <div class="cta-container">
-                <a href="[INVITATION_LINK]" class="cta-button">Accept Invitation</a>
+                <a href={{invitaitonLink}} class="cta-button">Accept Invitation</a>
             </div>
 
             <p class="message-text" style="text-align: center; font-size: 14px; color: #64748b;">

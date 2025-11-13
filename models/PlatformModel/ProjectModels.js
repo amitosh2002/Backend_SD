@@ -1,12 +1,14 @@
 import mongoose from "mongoose";
-import { uuid } from "uuidv4";
+import { v4 as uuidv4 } from "uuid";
+
 
 const Projects = new mongoose.Schema({
   projectId: {
     type: String,            
     required: true,
     unique: true,
-    default: () => uuid(),  // ✅ Auto-generate UUID
+    // default: () => uuid(),  // ✅ Auto-generate UUID
+    default: () => uuidv4(),
   },
   partnerId: {
     type:String,
@@ -14,7 +16,7 @@ const Projects = new mongoose.Schema({
     required: true,
     index: true, // Important for filtering partner's projects
   },
-  name: {
+  projectName: {
     type: String,
     required: true,
     trim: true,
@@ -23,7 +25,10 @@ const Projects = new mongoose.Schema({
     type: String,
     required: true,
     trim: true,
-    unique: true,
+  },
+  teamSize:{
+    type:String,
+    require:true,
   },
   description: {
     type: Object,
@@ -31,14 +36,14 @@ const Projects = new mongoose.Schema({
   },
   startDate: {
     type: Date,
-    required: true,
+    // required: true,
   },
   status: {
     type: String,
     enum: ['draft', 'active', 'inactive', 'completed', 'cancelled'],
     default: 'draft',
   },
-  category: {
+  projectType: {
     type: String,
     trim: true,
   },

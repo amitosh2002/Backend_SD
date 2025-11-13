@@ -6,6 +6,7 @@ import {
   sendVerificationOTP,
   sendPasswordResetOTP,
 } from "../services/emailService.js";
+import { UserWorkAccess } from "../models/PlatformModel/UserWorkAccessModel.js";
 
 // Generate JWT token
 const generateToken = (userId, role) => {
@@ -195,15 +196,13 @@ const register = async (req, res) => {
     }
 
     const { username, email, password, phone, firstName, lastName } = data;
-    console.log(req.body, "body for register");
 
-    // --- FIX 1: Check if user already exists based on all unique fields ---
+    // --- Check if user already exists ---
     const existingUser = await User.findOne({
       $or: [{ email }, { username }, { phone }],
     });
 
     if (existingUser) {
-      // Provide a more specific error based on what was found
       let field = '';
       if (existingUser.email === email) field = 'email';
       else if (existingUser.username === username) field = 'username';
@@ -215,43 +214,38 @@ const register = async (req, res) => {
       });
     }
 
-    // --- FIX 2: Explicitly set isVerified to false (if not default in schema) ---
+    // --- Create new user ---
     const user = new User({
       username,
       email,
       password,
       phone,
       profile: { firstName, lastName },
-      isVerified: false, // Ensure this is explicitly set if the schema doesn't default
-      // You might also add a 'status: "PENDING_VERIFICATION"' field
+      isVerified: false,
     });
 
-    // Generate OTP for verification
-    const otpCode = generateOTPCode();
-
-    // Save user first
     await user.save();
 
-    // Create OTP record
-    await createOTPRecord(email, otpCode);
+    // --- Update pending invitations for this email ---
+    await UserWorkAccess.updateMany(
+      { userId: null, invitedEmail: email }, // assuming you store invited email
+      { $set: { userId: user._id, status: "accepted" } } // mark as accepted
+    );
 
-    // Send verification email (Error handling kept as is)
+    // --- Generate OTP and send verification email ---
+    const otpCode = generateOTPCode();
+    await createOTPRecord(email, otpCode);
     try {
       await sendVerificationOTP(
         email,
-        {
-          firstName,
-          username,
-          email,
-        },
+        { firstName, username, email },
         otpCode
       );
     } catch (emailError) {
       console.error("Failed to send verification email:", emailError);
-      // We still return success but note the email error internally
     }
 
-    // --- FIX 3: Return success, but the user is NOT yet verified ---
+    // --- Return response ---
     res.status(201).json({
       success: true,
       message:
@@ -261,8 +255,7 @@ const register = async (req, res) => {
         username: user.username,
         email: user.email,
         phone: user.phone,
-        // isVerified will be false here, preventing login until OTP route is hit
-        isVerified: user.isVerified, 
+        isVerified: user.isVerified,
       },
     });
   } catch (error) {
@@ -274,6 +267,7 @@ const register = async (req, res) => {
     });
   }
 };
+
 
 // Send OTP for login
 const sendLoginOTP = async (req, res) => {

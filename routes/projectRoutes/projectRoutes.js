@@ -1,5 +1,5 @@
 import { validateToken } from '../../controllers/authController.js';
-import { createProject, deleteProject, getProjectById, listUserAccessibleProjects, updateProject } from '../../controllers/ProjectController/projectController.js';
+import { createProject, deleteProject, getProjectById, inviteUserToProject, listUserAccessibleProjects, updateProject } from '../../controllers/ProjectController/projectController.js';
 
 
 // const express = require('express');
@@ -16,6 +16,8 @@ projectRoutes.post('/v1/projects', authenticateToken, createProject);
 projectRoutes.get('/v1/projects/:id', authenticateToken, getProjectById);
 projectRoutes.put('/v1/projects/:id', authenticateToken, updateProject);
 projectRoutes.delete('/v1/projects/:id', authenticateToken, deleteProject);
+projectRoutes.post('/v1/invite/invitaion',  inviteUserToProject);
+
 
 
 export default projectRoutes;

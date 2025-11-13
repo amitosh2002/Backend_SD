@@ -1,27 +1,22 @@
 import mongoose from "mongoose";
-
-
-
 const UserWorkAccessSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
-    required: true,
+    default: null,
   },
   partnerId: {
-    type:String,
-    // ref: "Partner",
+    type: String,
   },
   projectId: {
     type: String,
-    // ref: "Project",
   },
-   accessType: {
-   type: Number,
-    enum: [100, 200, 300], // 100 = Viewer, 200 = Manager, 300 = Admin
+  accessType: {
+    type: Number,
+    enum: [100, 200, 300],
     default: 100,
   },
-   invitedBy: {
+  invitedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
     required: false,
@@ -37,7 +32,13 @@ const UserWorkAccessSchema = new mongoose.Schema({
   },
 });
 
-UserWorkAccessSchema.index({ userId: 1, partnerId: 1, projectId: 1 }, { unique: true });
+// ✅ Sparse unique index to allow multiple null userId entries
+UserWorkAccessSchema.index(
+  { userId: 1, partnerId: 1, projectId: 1 },
+  { unique: true, sparse: true }
+);
 
-
-export const UserWorkAccess = mongoose.model("UserWorkAccess", UserWorkAccessSchema);
+export const UserWorkAccess = mongoose.model(
+  "UserWorkAccess",
+  UserWorkAccessSchema
+);
