@@ -208,3 +208,19 @@ export const otpRateLimit = (() => {
     next();
   };
 })();
+
+
+export const invitationAuthToken = (invitedBy, projectId, partnerId, invitedEmail) => {
+  const token = jwt.sign(
+    {
+      invitedBy,
+      projectId,
+      partnerId,
+      invitedEmail,
+    },
+    process.env.INVITE_JWT_TOKEN, // secret key
+    { expiresIn: "7d" } // optional: token expires in 7 days
+  );
+
+  return token;
+};
