@@ -93,7 +93,7 @@ app.use("/api/platform", keyValueRoute);
 app.use("/api/platform", userRoutes);
 // for github intregation 
 app.use("/api/gihub-repo",githubrouter)
-app.use("/api/partner",inviteRoutes);
+// app.use("/api/partner",inviteRoutes);
 app.get("/server", (req, res) => {
   res.send("Hello World!");
   

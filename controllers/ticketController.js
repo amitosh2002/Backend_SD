@@ -606,3 +606,53 @@ export const getTicketByQuery = async (req, res) => {
         return res.status(500).json({ message: "Internal server error." });
     }
 };
+
+
+
+
+export const addStoryPoint = async (req, res) => {
+  const {  storyPoint } = req.body;
+console.log(req.body)
+  // 1. Input Validation Check
+  if (!storyPoint.userId || storyPoint === undefined || !storyPoint.ticketId) {
+    // Note: storyPoint might be 0, so check against undefined/null, not just falsy value
+    return res.status(400).json({ 
+      message: "Missing required fields: userId, storyPoint, or ticketId.",
+      success: false
+    });
+  }
+
+  try {
+    // Use TicketId directly and pass the update object correctly.
+    // { new: true } option ensures the function returns the updated document.
+    const updatedTicket = await TicketModel.findByIdAndUpdate(
+      storyPoint.ticketId,
+      { storyPoint: storyPoint.point }, // The update object
+      { new: true } // Return the new, modified document
+    );
+
+    // 3. Check if ticket was found and updated
+    if (!updatedTicket) {
+      return res.status(404).json({
+        message: `Ticket with ID ${storyPoint.ticketId} not found.`,
+        success: false
+      });
+    }
+
+    // 4. Success Response
+    return res.status(200).json({
+      message: "Story point successfully added/updated.",
+      success: true,
+      ticket: updatedTicket
+    });
+
+  } catch (error) {
+    // 5. Error Handling
+    console.error("Error updating story point:", error);
+    return res.status(500).json({
+      message: "Internal server error during update.",
+      success: false,
+      error: error.message
+    });
+  }
+};
