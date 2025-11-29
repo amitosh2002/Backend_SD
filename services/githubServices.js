@@ -1,5 +1,5 @@
 // services/githubService.js
-import { Octokit } from "octokit";
+import { Octokit } from "@octokit/rest";
 import dotenv from "dotenv";
 import GithubRepoModel from "../models/PlatformModel/GithubRepoModel.js";
 import GithubInstallationModel from "../models/PlatformModel/GithubInstallationModel.js";

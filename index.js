@@ -13,6 +13,7 @@ import githubrouter from "./routes/Github/githubreporoutes.js";
 import inviteRoutes from "./routes/inviteRoutes.js";
 import "./cronjs/cronjob.js";
 import guiRoutes from './routes/GUI_routes/guiRoutes.js';
+import aiRouter from "./routes/alRoute/aiRoute.js";
 // import { MongoClient } from 'mongodb';
 // import bodyParser from 'body-parser';
 // import dotenv from 'dotenv';
@@ -84,6 +85,10 @@ startServer();
 // }
 
 // routes initiliztion
+
+//ai routes
+app.use("/api/ai", aiRouter);
+
 app.use("/api/platform", projectRoutes); // routes for each project
 app.use("/api/platform", ticketRoutes); // ticket routes
 app.use("/api/email", emailRoutes); // email routes
@@ -98,6 +103,7 @@ app.get("/server", (req, res) => {
   res.send("Hello World!");
   
 }
+
 
 
 );
