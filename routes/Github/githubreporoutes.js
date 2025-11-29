@@ -12,6 +12,8 @@ const githubrouter = express.Router();
 // Repo management
 githubrouter.get("/repos", listRepos);
 githubrouter.post("/repos", createRepo);
+githubrouter.post("/repos", createRepo);
+
 
 // Branch management
 githubrouter.get("/repos/:owner/:repo/branches", authenticateToken,listBranches);
