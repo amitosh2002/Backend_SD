@@ -1,6 +1,7 @@
 // controllers/velocityController.js
 import { octokit } from "../../services/githubServices.js";
 import { generateVelocityReport, geminiEnabled } from "../../services/geminiService.js";
+import { computeDoraMetrics } from "../../services/metricsService.js";
 
 /**
  * GET /api/ai/velocity?owner=org&repo=repo&since=2025-11-01&until=2025-11-29
@@ -15,107 +16,22 @@ export const generateDeveloperVelocity = async (req, res) => {
     const sinceDate = since ? new Date(since) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
     const untilDate = until ? new Date(until) : new Date();
 
-    // ---------- 1) Deployment Frequency (DF) ----------
-    // list deployments and filter by environment=production and timeframe
-    const deploymentsResp = await octokit.rest.repos.listDeployments({ owner, repo, per_page: 200 });
-    const deployments = (deploymentsResp.data || []).filter(d => {
-      const created = new Date(d.created_at || d.created || d.updated_at || Date.now());
-      // optional: restrict to production environment
-      const env = (d.environment || "").toLowerCase();
-      return created >= sinceDate && created <= untilDate && (env === "production" || env === "prod" || !env);
-    });
+    // We already computed metrics via computeDoraMetrics
+    const { numericMetrics, samplePRs, sampleIncidents } = await computeDoraMetrics({ octokit, owner, repo, since: sinceDate, until: untilDate });
 
-    const timeWindowDays = (untilDate - sinceDate) / (1000 * 3600 * 24) || 1;
-    const deploymentFrequency = deployments.length / timeWindowDays; // deploys per day
-
-    // ---------- 2) Lead Time for Changes (LTC) ----------
-    // For each deployment, compute (deployCompletedTime - firstCommitTime)
-    const leadTimes = [];
-    for (const dep of deployments) {
+    // Optional: include per-developer breakdown if requested
+    const includeDeveloper = req.query.includeDeveloper === 'true' || req.query.includeDeveloper === '1';
+    let developerMetrics = null;
+    if (includeDeveloper) {
+      const { computeDeveloperMetrics } = await import('../../services/metricsService.js');
       try {
-        const sha = dep.sha;
-        if (!sha) continue;
-        // commit time
-        const commitResp = await octokit.rest.repos.getCommit({ owner, repo, ref: sha });
-        const commitTime = new Date(commitResp.data.commit.author.date);
-
-        // deployment status to find when completed; fallback to dep.created_at
-        const statusesResp = await octokit.rest.repos.listDeploymentStatuses({
-          owner,
-          repo,
-          deployment_id: dep.id,
-          per_page: 10
-        });
-        const status = statusesResp.data[0];
-        const completedAt = status ? new Date(status.created_at || status.updated_at || dep.updated_at || dep.created_at) : new Date(dep.created_at);
-
-        const ms = completedAt - commitTime;
-        if (ms >= 0) leadTimes.push(ms);
+        developerMetrics = await computeDeveloperMetrics({ octokit, owner, repo, since: sinceDate, until: untilDate });
       } catch (err) {
-        // ignore per-deployment errors
-        console.warn("LT calc error for dep", dep.id, err.message);
+        console.warn('computeDeveloperMetrics failed', err.message || err);
+        // don't fail the whole endpoint — include a warning field instead
+        developerMetrics = { error: err.message || 'Failed to compute developer metrics' };
       }
     }
-    const avgLeadTimeMs = leadTimes.length ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length) : null;
-
-    // ---------- 3) Change Failure Rate (CFR) ----------
-    // Count failed workflow runs / deployments associated with branch/sha
-    // We'll examine workflow runs in timeframe and count failures
-    const workflowRunsResp = await octokit.rest.actions.listWorkflowRunsForRepo({
-      owner,
-      repo,
-      per_page: 200,
-      status: "completed"
-    });
-    const workflowRuns = (workflowRunsResp.data.workflow_runs || []).filter(w => {
-      const runAt = new Date(w.created_at);
-      return runAt >= sinceDate && runAt <= untilDate;
-    });
-
-    const totalDeployOrRuns = Math.max(deployments.length, workflowRuns.length);
-    const failedRuns = workflowRuns.filter(w => w.conclusion === "failure" || w.conclusion === "cancelled").length;
-    const changeFailureRate = totalDeployOrRuns ? (failedRuns / totalDeployOrRuns) * 100 : 0;
-
-    // ---------- 4) Mean Time To Recovery (MTTR) ----------
-    // Use GitHub issues with label 'incident' within timeframe
-    const incidentIssuesResp = await octokit.rest.issues.listForRepo({
-      owner,
-      repo,
-      per_page: 200,
-      since: sinceDate.toISOString()
-    });
-    const incidents = (incidentIssuesResp.data || []).filter(i => {
-      const created = new Date(i.created_at);
-      return created >= sinceDate && created <= untilDate && (i.labels || []).some(l => (typeof l === "string" ? l : l.name).toLowerCase().includes("incident"));
-    });
-
-    const mttrList = [];
-    for (const inc of incidents) {
-      if (!inc.closed_at) continue;
-      const started = new Date(inc.created_at);
-      const resolved = new Date(inc.closed_at);
-      const ms = resolved - started;
-      if (ms >= 0) mttrList.push(ms);
-    }
-    const avgMttrMs = mttrList.length ? Math.round(mttrList.reduce((a, b) => a + b, 0) / mttrList.length) : null;
-
-    // ---------- 5) Supporting context: PRs, PR sizes, code churn (basic) ----------
-    // get merged PRs in timeframe
-    const prsResp = await octokit.rest.pulls.list({
-      owner,
-      repo,
-      state: "closed",
-      per_page: 200
-    });
-    const mergedPRs = (prsResp.data || []).filter(pr => pr.merged_at && new Date(pr.merged_at) >= sinceDate && new Date(pr.merged_at) <= untilDate);
-
-    // compute avg PR size and churn (basic: additions+deletions)
-    const prSizes = mergedPRs.map(p => (p.additions || 0) + (p.deletions || 0));
-    const avgPrSize = prSizes.length ? Math.round(prSizes.reduce((a, b) => a + b, 0) / prSizes.length) : 0;
-
-    // code churn estimate: for each PR fetch commits and compute deletions/additions from commit stats (costly)
-    // For speed, we use PR additions/deletions as proxy for churn for now
-    const codeChurnPercent = avgPrSize > 0 ? Math.round(((mergedPRs.reduce((acc, p) => acc + (p.deletions || 0), 0)) / avgPrSize) * 100) : 0;
 
     // ---------- 6) Compose numeric results ----------
     function msToHuman(ms) {
@@ -127,58 +43,103 @@ export const generateDeveloperVelocity = async (req, res) => {
       return `${hh}h ${mm}m ${ss}s`;
     }
 
-    const numericMetrics = {
-      deploymentFrequency_per_day: Number(deploymentFrequency.toFixed(2)),
-      deployments_count: deployments.length,
-      avgLeadTimeMs,
-      avgLeadTimeHuman: msToHuman(avgLeadTimeMs),
-      changeFailureRatePercent: Number(changeFailureRate.toFixed(2)),
-      mttrMs: avgMttrMs,
-      mttrHuman: msToHuman(avgMttrMs),
-      mergedPRCount: mergedPRs.length,
-      avgPRSizeLines: avgPrSize,
-      codeChurnPercent: codeChurnPercent
-    };
-
-    // ---------- 7) Pick sample items to feed to Gemini for context ----------
-    const samplePRs = mergedPRs.slice(0, 6).map(p => ({
-      number: p.number,
-      title: p.title,
-      merged_at: p.merged_at,
-      additions: p.additions,
-      deletions: p.deletions,
-      url: p.html_url,
-      author: p.user?.login
-    }));
-
-    const sampleIncidents = incidents.slice(0, 6).map(i => ({
-      key: i.number,
-      title: i.title,
-      created_at: i.created_at,
-      closed_at: i.closed_at,
-      url: i.html_url
-    }));
+    // numericMetrics, samplePRs and sampleIncidents returned from metrics service (used below to build prompt and response)
 
     // ---------- 8) Build a structured prompt for Gemini ----------
     const prompt = `
-You are an engineering manager assistant. Given the following numeric DORA metrics and supporting context from the GitHub repository ${owner}/${repo} for the period ${sinceDate.toISOString()} to ${untilDate.toISOString()}, produce:
+You are an engineering analytics assistant. Using the GitHub DORA metrics and sample data for ${owner}/${repo} between ${sinceDate.toISOString()} and ${untilDate.toISOString()}, generate a Developer Velocity Dashboard with the sections below (keep output concise but structured).
 
-1) A short executive summary (2-4 lines).
-2) A clear assessment of each DORA metric (Deployment Frequency, Lead Time for Changes, Mean Time to Recovery, Change Failure Rate) — include the numeric value and what it signals.
-3) Top 3 actionable recommendations to improve developer velocity and reliability (no generic items; give concrete suggestions like "reduce PR size to < 200 LOC", "increase test coverage for service X", "add pre-merge checks for flakiness").
-4) A prioritized checklist for next sprint (3 items).
-5) A JSON object "insights" containing the four metrics and supportive fields (use machine-readable values).
+====================================================
+1) SUMMARY
+====================================================
+Give 2–3 lines summarizing team speed + stability.
 
-Numeric metrics:
+====================================================
+2) METRIC SCORECARDS
+====================================================
+For DF, LTC, MTTR, CFR:
+• numeric value  
+• ↑ or ↓ indicator  
+• 1-line interpretation  
+
+====================================================
+3) INSIGHTS
+====================================================
+For each metric, give: trend, risk, 1 improvement.
+
+====================================================
+4) GRAPH DESCRIPTIONS
+====================================================
+Short explanation for 4 charts:
+- Deployment Frequency  
+- Lead Time Trend  
+- MTTR Trend  
+- Change Failure Rate  
+
+Each: best chart type + what the pattern means.
+
+====================================================
+5) TABLE SUMMARIES
+====================================================
+Use sample PRs & incidents to generate:
+- PR table rows (6 max)
+- Incident table rows (6 max)
+
+====================================================
+6) NEXT SPRINT (3 PRIORITIES)
+====================================================
+
+====================================================
+7) TOP 3 RECOMMENDATIONS
+====================================================
+
+====================================================
+8) FINAL JSON OUTPUT (DASHBOARD_JSON)
+====================================================
+Return **only this JSON**, nothing else after:
+
+{
+  "metrics": {
+    "deploymentFrequency_per_day": number,
+    "avgLeadTimeMs": number,
+    "mttrMs": number,
+    "changeFailureRatePercent": number
+  },
+  "velocityRadar": {
+    "prVolume": number,
+    "quality": number,
+    "stability": number,
+    "frequency": number,
+    "efficiency": number
+  },
+  "graphs": {
+    "deploymentFrequency": { "labels": [...], "values": [...] },
+    "leadTime": { "labels": [...], "values": [...] },
+    "mttr": { "labels": [...], "values": [...] },
+    "changeFailureRate": { "labels": [...], "values": [...] }
+  },
+  "tables": {
+    "pullRequests": [...samplePRs...],
+    "incidents": [...sampleIncidents...]
+  },
+  "period": {
+    "from": "${sinceDate.toISOString()}",
+    "to": "${untilDate.toISOString()}"
+  }
+}
+
+====================================================
+DATA:
+Numeric:
 ${JSON.stringify(numericMetrics, null, 2)}
 
-Sample merged PRs:
+PRs:
 ${JSON.stringify(samplePRs, null, 2)}
 
-Sample incidents:
+Incidents:
 ${JSON.stringify(sampleIncidents, null, 2)}
 
-Return the result as plain text with a final JSON block labeled "METRICS_JSON" containing the "insights" object only.
+
 `;
 
     // ---------- 9) Call Gemini (if enabled) ----------
@@ -193,10 +154,62 @@ Return the result as plain text with a final JSON block labeled "METRICS_JSON" c
       metrics: numericMetrics,
       samplePRs,
       sampleIncidents,
+      developerMetrics,
       aiReport: aiText
     });
   } catch (err) {
     console.error("generateDeveloperVelocity error:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+export const generateDeveloperBreakdown = async (req, res) => {
+  try {
+    const { owner, repo, since, until } = req.query;
+    if (!owner || !repo) return res.status(400).json({ success: false, message: "owner & repo required" });
+    const sinceDate = since ? new Date(since) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    const untilDate = until ? new Date(until) : new Date();
+    const { computeDeveloperMetrics } = await import('../../services/metricsService.js');
+    const devMetrics = await computeDeveloperMetrics({ octokit, owner, repo, since: sinceDate, until: untilDate });
+    return res.json({ success: true, repo: `${owner}/${repo}`, developerMetrics: devMetrics });
+  } catch (err) {
+    console.error('generateDeveloperBreakdown error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+export const generateTeamVelocity = async (req, res) => {
+  try {
+    const { repos, since, until } = req.query; // repos=owner/repo,owner2/repo2
+    if (!repos) return res.status(400).json({ success: false, message: 'repos query required (comma-separated list of owner/repo)' });
+    const list = repos.split(',').map(r => r.trim()).filter(Boolean);
+    if (list.length === 0) return res.status(400).json({ success: false, message: 'No repos provided' });
+    const sinceDate = since ? new Date(since) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    const untilDate = until ? new Date(until) : new Date();
+    // Build repo objects like { fullName: 'owner/repo' }
+    const repoObjects = list.map(full => ({ fullName: full }));
+    const { computeTeamMetrics } = await import('../../services/metricsService.js');
+    const results = await computeTeamMetrics({ octokit, repos: repoObjects, since: sinceDate, until: untilDate });
+    return res.json({ success: true, repos: list, analytics: results });
+  } catch (err) {
+    console.error('generateTeamVelocity error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+export const compareRepoMetrics = async (req, res) => {
+  try {
+    const { owner, repo, sinceA, untilA, sinceB, untilB } = req.query;
+    if (!owner || !repo || !sinceA || !untilA || !sinceB || !untilB) {
+      return res.status(400).json({ success: false, message: 'owner, repo and both sinceA/untilA and sinceB/untilB are required' });
+    }
+    const { computeDoraMetrics, compareMetrics } = await import('../../services/metricsService.js');
+    const a = await computeDoraMetrics({ octokit, owner, repo, since: new Date(sinceA), until: new Date(untilA) });
+    const b = await computeDoraMetrics({ octokit, owner, repo, since: new Date(sinceB), until: new Date(untilB) });
+    const delta = compareMetrics(a.numericMetrics, b.numericMetrics);
+    return res.json({ success: true, repo: `${owner}/${repo}`, periodA: { sinceA, untilA }, periodB: { sinceB, untilB }, metricsA: a.numericMetrics, metricsB: b.numericMetrics, delta });
+  } catch (err) {
+    console.error('compareRepoMetrics error:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 };

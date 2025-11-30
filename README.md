@@ -37,6 +37,7 @@ INVITE_JWT_TOKEN="..."
 EMAIL_USER="..."
 EMAIL_PASSWORD="..."
 FRONTEND_URL='http://localhost:5173'
+BACKEND_HOST='http://localhost:8000' # optional, used by CLI scripts
 
 # GitHub PAT
 GITHUB_TOKEN=github_pat_xxx
@@ -69,6 +70,13 @@ You can call the following endpoints:
 
 - `GET /server` : Simple health endpoint that returns "Hello World!"
 - `GET /api/ai/velocity?owner=<owner>&repo=<repo>&since=YYYY-MM-DD&until=YYYY-MM-DD` : Returns DORA metrics and AI-generated summary for a repo. `since` and `until` are optional (defaults to last 30 days).
+ - `GET /api/ai/velocity?owner=<owner>&repo=<repo>&since=YYYY-MM-DD&until=YYYY-MM-DD` : Returns DORA metrics and AI-generated summary for a repo. `since` and `until` are optional (defaults to last 30 days).
+   - Optional query param `includeDeveloper=true` will also return a `developerMetrics` key with per-developer stats for the same timeframe.
+ - `GET /api/ai/velocity?owner=<owner>&repo=<repo>&since=YYYY-MM-DD&until=YYYY-MM-DD` : Returns DORA metrics and AI-generated summary for a repo. `since` and `until` are optional (defaults to last 30 days).
+ - `GET /api/ai/velocity/developer?owner=<owner>&repo=<repo>&since=...&until=...` : Returns per-developer metrics (merged PR count, avg PR size, additions/deletions for each developer)
+ - `GET /api/ai/velocity/developer?owner=<owner>&repo=<repo>&since=...&until=...` : Returns per-developer metrics (merged PR count, avg PR size, additions/deletions for each developer)
+ - `GET /api/ai/velocity/team?repos=owner/repo,owner2/repo2&since=...&until=...` : Aggregated team-level metrics across a list of repos (comma-separated `repos` query param)
+ - `GET /api/ai/velocity/compare?owner=&repo=&sinceA=&untilA=&sinceB=&untilB=` : Compare metrics between two time windows for the same repo; returns both metrics and a `delta` summary.
 
 Example:
 
@@ -164,7 +172,10 @@ Note:
 
 - There are models and services to collect branch analytics (PRs, comments, runs) and store them in DB under `BranchAnalyticsModel`.
 - Services: `services/githubServices.js` provides `collectRepoBranchAnalytics(owner, repo, repoModel)` which lists branches and upserts records into DB.
+  - `services/metricsService.js` provides computing functions for DORA metrics, developer breakdown, team aggregation and comparison. This makes the controller logic lean and reusable (also used by `scripts/velocityReport.js`).
 - There's also a cron job (`cronjs/cronjob.js`) that periodically hits backend endpoints for scheduled analytics collection.
+
+- DB-ready: `services/metricsService.js` includes TODO comments where the computed metrics can be persisted to a `MetricsModel` (e.g., for time-series storage), and `services/githubServices.js` populates `BranchAnalyticsModel` for branch-specific analytics. This enables caching, historical trend analysis and dashboarding in the future.
 
 Manual run (dev/test):
 
@@ -172,6 +183,32 @@ Manual run (dev/test):
 cd Backend_SD
 node scripts/velocityReport.js amitosh2002 Backend_SD
 ```
+
+### New: Script to call velocity routes (all endpoints)
+
+There is a new utility script `scripts/velocityRoutes.js` that lets you call the API endpoints for velocity (the same routes exposed via `aiRoute.js`) from the command line and quickly see responses.
+
+Usage (examples):
+
+```bash
+# call all endpoints for a given repo
+node scripts/velocityRoutes.js --route all --host http://localhost:8000 --owner amitosh2002 --repo Backend_SD
+
+# call only developer metrics
+node scripts/velocityRoutes.js --route developer --host http://localhost:8000 --owner amitosh2002 --repo Backend_SD --since 2025-01-01 --until 2025-01-31
+
+# call team metrics
+node scripts/velocityRoutes.js --route team --host http://localhost:8000 --repos amitosh2002/Backend_SD,otherOrg/otherRepo
+
+# call compare metrics (2 time windows) for repo
+node scripts/velocityRoutes.js --route compare --host http://localhost:8000 --owner amitosh2002 --repo Backend_SD --sinceA 2025-01-01 --untilA 2025-01-07 --sinceB 2025-02-01 --untilB 2025-02-07
+
+# pass an auth header if your server requires it
+node scripts/velocityRoutes.js --route all --host http://localhost:8000 --owner amitosh2002 --repo Backend_SD --token "Bearer <JWT_OR_BEARER>"
+```
+
+The script will print the HTTP response code and the parsed JSON body (or text) for each request. This is helpful for debugging token scope and route availability issues.
+
 
 ---
 
@@ -227,6 +264,12 @@ curl -sS "http://localhost:8000/api/ai/velocity?owner=amitosh2002&repo=Backend_S
 # Confirm token
 export GITHUB_TOKEN=$(grep -E '^GITHUB_TOKEN=' .env | cut -d '=' -f2-)
 curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/user | jq '.login'
+```
+
+You can also run the new velocity routes caller via npm:
+
+```bash
+npm run call-velocity -- --route all --host http://localhost:8000 --owner amitosh2002 --repo Backend_SD
 ```
 
 If you want me to add a quick test harness, CI checks, or a GitHub token scope checker, tell me what you'd like and I can add it next.

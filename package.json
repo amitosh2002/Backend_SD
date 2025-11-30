@@ -11,7 +11,8 @@
     "test-email": "node test-email.js",
     "test-auth": "node test-auth.js",
     "test-handlebars": "node test-handlebars.js",
-    "migrate": "node scripts/runMigration.js"
+    "migrate": "node scripts/runMigration.js",
+    "call-velocity": "node scripts/velocityRoutes.js"
   },
   "author": "Amitosh kumar",
   "license": "ISC",
