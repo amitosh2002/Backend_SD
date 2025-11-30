@@ -210,13 +210,15 @@ export const otpRateLimit = (() => {
 })();
 
 
-export const invitationAuthToken = (invitedBy, projectId, partnerId, invitedEmail) => {
+export const invitationAuthToken = (invitedBy, projectId, partnerId, invitedEmail,invitationId,accessType) => {
   const token = jwt.sign(
     {
       invitedBy,
       projectId,
       partnerId,
       invitedEmail,
+      invitationId,
+      accessType
     },
     process.env.INVITE_JWT_TOKEN, // secret key
     { expiresIn: "7d" } // optional: token expires in 7 days

@@ -3,6 +3,7 @@
 // controller to create a new project or add a new project
 // import {ProjectModel} from '../models/ProjectModels.js';
 
+import mongoose from "mongoose";
 import { invitationAuthToken } from "../../middleware/authMiddleware.js";
 import { InvitationTracking } from "../../models/PlatformModel/invitaionTrakingModel.js";
 import { PartnerModel } from "../../models/PlatformModel/partnerModel.js";
@@ -10,6 +11,8 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import User from "../../models/UserModel.js";
 import { sendInvitationEmail } from "../../services/emailService.js";
+import { accesTypeView } from "../../utility/platformUtility.js";
+import { TicketModel } from "../../models/TicketModels.js";
 
 // import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
@@ -178,102 +181,356 @@ export const listUserAccessibleProjects = async (req, res) => {
   }
 };
 
-export const inviteUserToProject = async (req, res) => {
-  const { projectId, userEmail, accessLevel, partnerId ,invitedBy} = req.body;
+// export const userWithProjectRights = async (req, res) => {
+//   try {
+//     const userId = req.body.userId;
 
+//     if (!userId) {
+//       return res.status(401).json({ msg: "Unauthorized access" });
+//     }
+
+//     const projectAccess = await UserWorkAccess.find({
+//       userId,
+//       accessType: { $gte: 300 },
+//       status: "accepted"
+//     });
+
+//     console.log("UserWorkAccess rows:", projectAccess);
+
+//     if (!projectAccess.length) {
+//       return res.status(404).json({ msg: "No access" });
+//     }
+
+//     let projectArray = [];
+
+//     for (let access of projectAccess) {
+//       const pid = access.projectId;
+//       console.log("Searching projectId:", pid);
+
+//       let proj = await PartnerModel.findOne({ projectId: pid });
+
+//       if (!proj) {
+//         try {
+//           proj = await PartnerModel.findById(pid);
+//         } catch (e) {}
+//       }
+
+//       console.log("Found project:", proj);
+
+//       if (proj) {
+//         projectArray.push({
+//           id: proj.projectId ?? proj._id,
+//           name: proj.projectName,
+//           status: proj.status
+//         });
+//       }
+//     }
+
+//     return res.status(200).json({
+//       success: true,
+//       userProjectWithRights: projectArray,
+//       msg: "Success"
+//     });
+
+//   } catch (error) {
+//     console.log(error);
+//     return res.status(500).json({ msg: "Server error", error });
+//   }
+// };
+
+const isValidObjectId = (id) => {
+  return mongoose.Types.ObjectId.isValid(id) && id.length === 24;
+};
+
+export const userWithProjectRights = async (req, res) => {
   try {
-    if (!projectId || !userEmail || !accessLevel || !partnerId) {
-      return res.status(400).json({
-        message: "Project ID, Partner ID, User Email, and Access Level are required",
-      });
+    const userId = req.body.userId;
+
+    if (!userId) {
+      return res.status(401).json({ msg: "Unauthorized access" });
     }
 
-    // 1️⃣ Check if a pending invitation already exists
-    const existingInvitation = await UserWorkAccess.findOne({
-      projectId,
-      partnerId,
-      invitedEmail: userEmail,
-      status: "pending",
-    });
+    const projectAccess = await UserWorkAccess.find({
+      userId: new mongoose.Types.ObjectId(userId),
+      accessType: { $gte: 300 },
+      status: "accepted",
+    }).lean();
 
-    if (existingInvitation) {
-      return res.status(400).json({ message: "Invitation already sent to this user" });
+    let projectArray = [];
+
+    for (let access of projectAccess) {
+      const pid = access.projectId;
+
+        const proj = await ProjectModel.findOne({ projectId: pid }).lean();
+
+
+      if (proj) {
+        projectArray.push({
+          id: proj.projectId,
+          name: proj.name?? proj.projectName,
+        }
+      );
+      }
     }
-
-    // 2️⃣ Generate invitation token
-    const inviteToken = invitationAuthToken(invitedBy, projectId, partnerId, userEmail);
-
-    // 3️⃣ Create pending UserWorkAccess record
-    const accessRecord = new UserWorkAccess({
-      projectId,
-      partnerId,
-      invitedBy,
-      accessType: accessLevel || 100, // Default to Viewer if not specified
-      status: "pending",
-      userId: null, // User not registered yet
-      invitedEmail: userEmail, // Add the email to track pending invitations
-    });
-    await accessRecord.save();
-
-    // 4️⃣ Store invitation in InvitationTracking
-    const invitationTracking = new InvitationTracking({
-      email: userEmail,
-      invitedBy,
-      projectId,
-      partnerId,
-      revoked: false,
-      // timestamp will default to now
-    });
-    await invitationTracking.save();
-    const partnerDetails = await PartnerModel.findById(partnerId).lean();
-    const projectDetails = await ProjectModel.find(
-      { projectId: projectId }
-    );
-    console.log("partnerDetails:",partnerDetails);
-    console.log("projectDetails:",projectDetails);
-
-    // 5️⃣ Send invitation email
-    const inviteLink = `${process.env.FRONTEND_URL}/invitation?inviteToken=${inviteToken}`;
-    await sendInvitationEmail( {
-      partnerName:partnerDetails?.businessName|| "our team",
-      projectName:projectDetails?.name|| "the project",
-      invitaitonLink:inviteLink,
-      role: accessLevel|| 100,
-      to:userEmail,
-
-    });
 
     return res.status(200).json({
       success: true,
-      message: "Invitation sent successfully",
-      inviteToken,
+      userProjectWithRights: projectArray,
+      msg: "Success",
     });
-  } catch (err) {
-    console.error("Error inviting user:", err);
-    return res.status(500).json({ success: false, message: "Internal server error" });
+
+  } catch (error) {
+    console.error("Error in getAllProjectsForUser:", error);
+    return res.status(500).json({ msg: "Internal Server Error", error });
   }
 };
 
-export const acceptInvitataion=async (req,res)=>{
-  const {
-    invitedBy, projectId, partnerId, userEmail
-  }= req.body;
-  try {
-  if(!invitedBy || !projectId|| !partnerId,!userEmail){
-    return res.status(404).json({msg:"missing required parameter"})
-  }
-    const projectDetails = await UserWorkAccess.findOne({
-      invitedBy:invitedBy,
-     projectId:projectId,
-     partnerId:partnerId,
-     userEmail:userEmail
+export const inviteUserToProject = async (req, res) => {
+  const { projectId, emails, accessType, message, invitedBy } = req.body
+;
 
-    })
-    // const accept== await
+  console.log("first controller call")
+
+  try {
+    // -------------------------
+    // 1️⃣ Validate Input
+    // -------------------------
+    if (!projectId || !emails || !Array.isArray(emails) || emails.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Project ID and at least one email are required",
+      });
+    }
+
+    // -------------------------
+    // 2️⃣ Fetch Project and Partner
+    // -------------------------
+    const projectDetails = await ProjectModel.findOne({ projectId }).lean();
+    if (!projectDetails) {
+      return res.status(404).json({ success: false, message: "Project not found" });
+    }
+
+    const partnerId = projectDetails.partnerId;
+    const partnerDetails = await PartnerModel.findOne({partnerId}).lean();
+
+    // -------------------------
+    // 3️⃣ Prepare Response
+    // -------------------------
+    const results = [];
+
+    // -------------------------
+    // 4️⃣ Process Each Email
+    // -------------------------
+    for (const email of emails) {
+      // Check existing invite
+      const existingInvitation = await UserWorkAccess.findOne({
+        projectId,
+        partnerId,
+        invitedEmail: email,
+        status: "pending",
+      });
+
+      if (existingInvitation) {
+        results.push({
+          email,
+          status: "already_sent",
+          message: "Invitation already sent to this email",
+        });
+        continue; // skip to next email
+      }
+
+
+      // Create UserWorkAccess record
+      await UserWorkAccess.create({
+        projectId,
+        partnerId,
+        invitedBy,
+        accessType: accessType || 100,
+        status: "pending",
+        userId: null,
+        invitedEmail: email,
+      });
+
+      // Save Invitation Tracking
+      const inviteRes = await InvitationTracking.create({
+        email,
+        invitedBy,
+        projectId,
+        partnerId,
+        revoked: false,
+      });
+
+      // Generate invite token
+      const inviteToken = invitationAuthToken(invitedBy, projectId, partnerId, email,inviteRes?.invitationId,accessType);
+      // Email content
+      const inviteLink = `${process.env.FRONTEND_URL}/invitation?inviteToken=${inviteToken}`;
+      console.log(inviteLink, "invite link here")
+      // Send Emaily
+      await sendInvitationEmail({
+        partnerName: partnerDetails?.businessName || "Our Team",
+        projectName: projectDetails?.name || "Your Project",
+        invitationLink: inviteLink,   // CORRECT
+        role: accesTypeView(accessType) || accesTypeView(100),
+        to: email,
+        message,
+      });
+
+      // Push success response
+      results.push({
+        email,
+        status: "sent",
+        inviteToken,
+        message: "Invitation sent successfully",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      results,
+    });
+  } catch (err) {
+    console.error("Error inviting user:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: err.message,
+    });
+  }
+};
+
+export const acceptInvitataion = async (req, res) => {
+  try {
+    const { invitationId } = req.body;
+
+    if (!invitationId) {
+      return res.status(400).json({
+        success: false,
+        message: "invitationId is required",
+      });
+    }
+
+    // 1️⃣ Fetch invitation tracking details
+    const inviteDetails = await InvitationTracking.findOne({ invitationId });
+
+    if (!inviteDetails) {
+      return res.status(404).json({
+        success: false,
+        message: "Invalid or expired invitation",
+      });
+    }
+
+    if (inviteDetails.revoked) {
+      return res.status(403).json({
+        success: false,
+        message: "This invitation has been revoked",
+      });
+    }
+
+    const { email, projectId, partnerId } = inviteDetails;
+    console.log(inviteDetails)
+
+    // 2️⃣ Check if the user exists → OPTIONAL userId
+    const existingUser = await User.findOne({ email });
+
+    let userIdToAssign = null;
+    if (existingUser) {
+      userIdToAssign = existingUser._id;
+    }
+
+    // 3️⃣ Find pending invite in UserWorkAccess
+    const accessRecord = await UserWorkAccess.findOne({
+      projectId,
+      partnerId,
+      invitedEmail: email,
+      status: "pending",
+    });
+    console.log(accessRecord,"accessRecord")
+    if (!accessRecord) {
+      return res.status(404).json({
+        success: false,
+        message: "No pending invitation found for this email",
+      });
+    }
+
+    // 4️⃣ Update entry → set userId ONLY if user exists
+    accessRecord.userId = userIdToAssign;
+    accessRecord.status = "accepted";
+    await accessRecord.save();
+
+    // 5️⃣ Mark invitation accepted in tracking table
+    inviteDetails.acceptedAt = new Date();
+    await inviteDetails.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Invitation accepted successfully",
+      userLinked: existingUser ? true : false,
+      note: existingUser
+        ? "User found and linked"
+        : "User not found. Will link automatically after signup.",
+      projectId,
+      partnerId,
+    });
 
   } catch (error) {
-    
+    console.error("Error in acceptInvitation:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong during acceptance",
+      error: error.message,
+    });
   }
+};
 
+export const invitationDetails = async (req, res) => {
+  try {
+    // const { invitedBy, projectId } = req.body;
+    const invitedBy=req.body.invitedBy;
+    const projectId=req.body.projectId;
 
-}
+    // Validation
+    if (!invitedBy || !projectId) {
+      return res.status(400).json({
+        success: false,
+        message: "invitedBy and projectId are required",
+      });
+    }
+
+    // Fetch project details
+    const projectDetails = await ProjectModel.findOne({ projectId });
+    if (!projectDetails) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    // Fetch user details
+    const userDetails = await User.findOne({ _id: invitedBy }).select(
+      "name username email"
+    );
+    if (!userDetails) {
+      return res.status(404).json({
+        success: false,
+        message: "Invited-by user not found",
+      });
+    }
+
+    // SUCCESS RESPONSE
+    return res.status(200).json({
+      success: true,
+      message: "Invitation details fetched",
+      data: {
+        project: projectDetails.name ?? projectDetails.projectName,
+        invitedBy: userDetails.username ?? userDetails.name,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching invitation details:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
