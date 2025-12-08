@@ -5,6 +5,7 @@ const UserWorkAccessSchema = new mongoose.Schema({
     ref: "User",
     default: null,
   },
+  
   partnerId: {
     type: String,
   },
@@ -13,8 +14,12 @@ const UserWorkAccessSchema = new mongoose.Schema({
   },
   accessType: {
     type: Number,
-    enum: [100, 200, 300],
+    enum: [100, 200, 300,400],
     default: 100,
+  },
+  invitedEmail:{
+    type:String,
+    default:null
   },
   invitedBy: {
     type: mongoose.Schema.Types.ObjectId,

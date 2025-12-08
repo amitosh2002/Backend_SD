@@ -20,7 +20,7 @@ router.post("/create", async (req, res) => {
       invitationToken,
       expiresAt
     });
-
+      
     // TODO: send email with token link
     // Example: https://yourapp.com/accept-invite?token=invitationToken
 
