@@ -1,5 +1,8 @@
 import { TicketModel } from "../models/TicketModels.js";
 import User from "../models/UserModel.js";
+import   {UserWorkAccess} from "../models/PlatformModel/UserWorkAccessModel.js";
+import mongoose from "mongoose";
+import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
 export const createTicket = async (req, res) => {
   try {
@@ -46,10 +49,11 @@ export const createTicketV2 = async (req, res) => {
   try {
     const ticketData = req.body;
     console.log(ticketData)
-    const userId =req.body.userId;
-    const user=await User.findById(userId);
-    if(!user){
-      return res.status(400).json({message:"User not found"});
+    const userId = req.body.userId || (req.user && req.user.userId);
+    if (!userId) return res.status(401).json({ message: 'Missing userId or unauthenticated' });
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(400).json({ message: "User not found" });
     }
 
     // Basic validation
@@ -60,21 +64,22 @@ export const createTicketV2 = async (req, res) => {
         code: "MISSING_REQUIRED_FIELDS"
       });
     }
-   let priority = ticketData?.priority.toUpperCase();
+  let priority = (ticketData?.priority || '').toString().toUpperCase();
     console.log(priority)
     // Optional: Sanitize and set defaults
     const sanitizedData = {
       // Set defaults if not provided
       title:ticketData?.title,
       description:ticketData?.description,
-      type:ticketData?.type?.type,
+      type: ticketData?.type?.type || ticketData?.type,
       priority: priority || 'MEDIUM',
-     status: ticketData?.status || 'OPEN',
+      status: ticketData?.status || 'OPEN',
       // Add reporter from authenticated user if not provided
       reporter: ticketData?.reporter  || user?.username,
       assignee: ticketData?.assignee || "Unassigned",
       // Add timestamps
       createdBy: user?.userId,
+      projectId: ticketData?.projectId,
       // Remove any undefined or null values
     };
 
@@ -86,13 +91,22 @@ export const createTicketV2 = async (req, res) => {
     });
 
     const ticket = new TicketModel(sanitizedData);
+    // If projectId is provided, derive partnerId from the ProjectModel and set it server-side
+    if (sanitizedData.projectId) {
+      const project = await ProjectModel.findOne({ projectId: sanitizedData.projectId }).lean();
+      if (!project) {
+        return res.status(400).json({ success: false, message: 'Invalid projectId provided' });
+      }
+      ticket.partnerId = project.partnerId;
+    }
+
     await ticket.save();
 
     return res.status(201).json({
       success: true,
       message: "Ticket created successfully",
       data: {
-        id: ticket._id,
+  id: ticket._id,
         ticketKey: ticket.ticketKey,
         title: ticket.title,
         type: ticket?.type,
@@ -135,36 +149,137 @@ export const createTicketV2 = async (req, res) => {
     });
   }
 };
+
+
 export const listTickets = async (req, res) => {
   try {
     const {
       page = 1,
       limit = 20,
-      type,
+      type, // Not used in filters yet, but kept for future use
       status,
       priority,
       assignee,
       reporter,
+      userId, // Used for access control, assumed to be available
+      projectId,
+      partnerId,
     } = req.query;
+
     const numericLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 200);
     const numericPage = Math.max(parseInt(page, 10) || 1, 1);
 
-    const filters = { type, status, priority, assignee, reporter };
-    const query = TicketModel.findByFilters(filters);
+    // Step 1: Find accepted access
+    // Note: Assuming UserWorkAccess model and connection are available globally.
+    const userAccessList = await UserWorkAccess.find({
+      userId,
+      status: "accepted",
+    }).lean();
 
+    // Step 2: Extract and normalize IDs to strings
+    const allowedProjectIds = userAccessList
+      .map((a) => String(a.projectId))
+      .filter(Boolean);
+    const allowedPartnerIds = userAccessList
+      .map((a) => String(a.partnerId))
+      .filter(Boolean);
+
+    // CRITICAL ACCESS CHECK: If the user has no accepted access, they shouldn't see anything.
+    if (allowedProjectIds.length === 0 && allowedPartnerIds.length === 0) {
+        return res.status(200).json({
+            page: numericPage,
+            limit: numericLimit,
+            total: 0,
+            items: [],
+            accessibleProjects: [],
+            accessiblePartners: [],
+        });
+    }
+
+    // Step 3: Build filters
+    const filters = {};
+
+    if (status) filters.status = status;
+    if (priority) filters.priority = priority;
+    if (assignee) filters.assignee = assignee;
+    if (reporter) filters.reporter = reporter;
+
+    // --- 🔹 Project Filter (Handles mixed UUID/ObjectId) ---
+    const projectIdString = projectId ? String(projectId) : null;
+
+    if (projectIdString) {
+      if (!allowedProjectIds.includes(projectIdString)) {
+        return res
+          .status(403)
+          .json({ message: "Access denied: no permission for this project." });
+      }
+
+      // Check for ObjectId format to handle legacy/mixed IDs
+      if (projectIdString.length === 24 && mongoose.Types.ObjectId.isValid(projectIdString)) {
+        filters.projectId = new mongoose.Types.ObjectId(projectIdString);
+      } else {
+        // Assume UUID string
+        filters.projectId = projectIdString;
+      }
+      
+    } else if (allowedProjectIds.length > 0) {
+      // If no projectId is specified, filter by all allowed projects.
+      const mixedProjectIds = allowedProjectIds.map(id => {
+        if (id.length === 24 && mongoose.Types.ObjectId.isValid(id)) {
+          return new mongoose.Types.ObjectId(id);
+        }
+        return id; // Use as string (UUID)
+      });
+
+      filters.projectId = {
+           $in: mixedProjectIds,
+      };
+    }
+    // Note: If allowedProjectIds is empty, tickets are implicitly restricted by the partner filter below.
+
+    // --- 🔹 Partner Filter (UUIDs/Strings) ---
+    const partnerIdString = partnerId ? String(partnerId) : null;
+    
+    if (partnerIdString) {
+      if (!allowedPartnerIds.includes(partnerIdString)) {
+        return res
+          .status(403)
+          .json({ message: "Access denied: no permission for this partner." });
+      }
+      filters.partnerId = partnerIdString;
+    } else if (allowedPartnerIds.length > 0) {
+      // If no partnerId specified, filter by all allowed partners.
+      filters.partnerId = { $in: allowedPartnerIds };
+    }
+    // Note: If allowedPartnerIds is empty, filters.partnerId will be undefined.
+    
+    // --- Access Validation Check ---
+    // If the user has access but neither project nor partner filtering criteria were met (highly unlikely 
+    // given the check at the top, but serves as a final safeguard)
+    // You might want to ensure AT LEAST ONE of filters.projectId or filters.partnerId is set if access list is non-empty.
+
+    // Step 4: Query tickets
     const [items, total] = await Promise.all([
-      query
+      TicketModel.find(filters)
+        .sort({ createdAt: -1 })
         .skip((numericPage - 1) * numericLimit)
         .limit(numericLimit)
         .lean(),
-      TicketModel.findByFilters(filters).countDocuments(),
+      TicketModel.countDocuments(filters),
     ]);
-
-    return res
-      .status(200)
-      .json({ page: numericPage, limit: numericLimit, total, items });
+    
+    // Step 5: Return response
+    return res.status(200).json({
+      page: numericPage,
+      limit: numericLimit,
+      total,
+      items,
+      accessibleProjects: allowedProjectIds,
+      accessiblePartners: allowedPartnerIds,
+    });
+    
   } catch (err) {
-    console.error("Error listing tickets:", err);
+    console.error("❌ Error listing tickets:", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -490,4 +605,54 @@ export const getTicketByQuery = async (req, res) => {
         }
         return res.status(500).json({ message: "Internal server error." });
     }
+};
+
+
+
+
+export const addStoryPoint = async (req, res) => {
+  const {  storyPoint } = req.body;
+console.log(req.body)
+  // 1. Input Validation Check
+  if (!storyPoint.userId || storyPoint === undefined || !storyPoint.ticketId) {
+    // Note: storyPoint might be 0, so check against undefined/null, not just falsy value
+    return res.status(400).json({ 
+      message: "Missing required fields: userId, storyPoint, or ticketId.",
+      success: false
+    });
+  }
+
+  try {
+    // Use TicketId directly and pass the update object correctly.
+    // { new: true } option ensures the function returns the updated document.
+    const updatedTicket = await TicketModel.findByIdAndUpdate(
+      storyPoint.ticketId,
+      { storyPoint: storyPoint.point }, // The update object
+      { new: true } // Return the new, modified document
+    );
+
+    // 3. Check if ticket was found and updated
+    if (!updatedTicket) {
+      return res.status(404).json({
+        message: `Ticket with ID ${storyPoint.ticketId} not found.`,
+        success: false
+      });
+    }
+
+    // 4. Success Response
+    return res.status(200).json({
+      message: "Story point successfully added/updated.",
+      success: true,
+      ticket: updatedTicket
+    });
+
+  } catch (error) {
+    // 5. Error Handling
+    console.error("Error updating story point:", error);
+    return res.status(500).json({
+      message: "Internal server error during update.",
+      success: false,
+      error: error.message
+    });
+  }
 };

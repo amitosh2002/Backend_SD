@@ -159,3 +159,17 @@ export function analyzeCurrentWeekAndMonthLogs(allTimeLogs) {
     };
 }
 
+ export const accesTypeView=(value)=>{
+    if (value===100) {
+      return "Viewer"
+    }
+    if (value===200) {
+      return "Editor"
+    }
+    if (value===300) {
+      return "Manager"
+    }
+    if (value===400) {
+      return "Admin"
+    }
+  }

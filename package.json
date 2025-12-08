@@ -10,7 +10,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "test-email": "node test-email.js",
     "test-auth": "node test-auth.js",
-    "test-handlebars": "node test-handlebars.js"
+    "test-handlebars": "node test-handlebars.js",
+    "migrate": "node scripts/runMigration.js"
   },
   "author": "Amitosh kumar",
   "license": "ISC",
@@ -20,12 +21,16 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
+    "google-auth-library": "^10.5.0",
     "handlebars": "^4.7.8",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.17.1",
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.5",
     "nodemon": "^3.1.10",
-    "simple-git": "^3.28.0"
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "simple-git": "^3.28.0",
+    "uuidv4": "^6.2.13"
   }
 }

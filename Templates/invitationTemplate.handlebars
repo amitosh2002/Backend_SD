@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>You're Invited to Join Hora</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f8fafc;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 40px auto;
+            background: #ffffff;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(102, 126, 234, 0.15);
+        }
+        .email-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 48px 40px;
+            text-align: center;
+            color: #ffffff;
+            position: relative;
+        }
+        .email-header::after {
+            content: '';
+            position: absolute;
+            bottom: -30px;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: white;
+            border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+        }
+        .logo-circle {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 24px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            font-weight: 700;
+            backdrop-filter: blur(10px);
+            border: 3px solid rgba(255, 255, 255, 0.3);
+        }
+        .email-header h1 {
+            margin: 0 0 12px 0;
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        .email-header p {
+            margin: 0;
+            font-size: 16px;
+            opacity: 0.95;
+        }
+        .email-body {
+            padding: 60px 40px 40px;
+        }
+        .greeting {
+            font-size: 20px;
+            font-weight: 600;
+            color: #1e293b;
+            margin: 0 0 24px 0;
+        }
+        .message-text {
+            font-size: 16px;
+            color: #475569;
+            line-height: 1.7;
+            margin: 0 0 24px 0;
+        }
+        .personal-message {
+            background: linear-gradient(135deg, #f8f9ff 0%, #f3f4ff 100%);
+            border-left: 4px solid #667eea;
+            padding: 20px 24px;
+            border-radius: 12px;
+            margin: 24px 0;
+        }
+        .personal-message p {
+            margin: 0;
+            color: #334155;
+            font-style: italic;
+            line-height: 1.6;
+        }
+        .personal-message-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #667eea;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .cta-button {
+            display: inline-block;
+            padding: 18px 48px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 16px;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            margin: 32px 0;
+        }
+        .cta-button:hover {
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+            transform: translateY(-2px);
+            cursor: pointer;
+        }
+        .cta-container {
+            text-align: center;
+        }
+        .info-box {
+            background: #f8fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 32px 0;
+        }
+        .info-box h3 {
+            margin: 0 0 16px 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+        }
+        .info-box ul {
+            margin: 0;
+            padding-left: 24px;
+            color: #475569;
+            line-height: 1.8;
+        }
+        .info-box li {
+            margin-bottom: 8px;
+        }
+        .role-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            background: linear-gradient(135deg, #667eea20, #764ba220);
+            color: #667eea;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            margin: 0 8px;
+        }
+        .email-footer {
+            background: #f8fafc;
+            padding: 32px 40px;
+            text-align: center;
+            border-top: 2px solid #e2e8f0;
+        }
+        .email-footer p {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            color: #64748b;
+            line-height: 1.6;
+        }
+        .footer-links {
+            margin-top: 16px;
+        }
+        .footer-links a {
+            color: #667eea;
+            text-decoration: none;
+            margin: 0 12px;
+            font-weight: 500;
+        }
+        .divider {
+            height: 1px;
+            background: linear-gradient(to right, transparent, #e2e8f0, transparent);
+            margin: 32px 0;
+        }
+        .highlight {
+            color: #667eea;
+            font-weight: 600;
+        }
+        @media only screen and (max-width: 600px) {
+            .email-container {
+                margin: 20px 10px;
+                border-radius: 12px;
+            }
+            .email-header {
+                padding: 32px 24px;
+            }
+            .email-header h1 {
+                font-size: 24px;
+            }
+            .email-body {
+                padding: 40px 24px 24px;
+            }
+            .email-footer {
+                padding: 24px;
+            }
+            .cta-button {
+                padding: 16px 32px;
+                display: block;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <!-- Header -->
+        <div class="email-header">
+            <div class="logo-circle">H</div>
+            <h1>You're Invited!</h1>
+            <p>Join your team on Hora</p>
+        </div>
+
+        <!-- Body -->
+        <div class="email-body">
+            <p class="greeting">Hi there! 👋</p>
+            
+            <p class="message-text">
+                <span class="highlight">{{partnerName}}</span> has invited you to join their team on <strong>Hora</strong>, 
+                a powerful time management and collaboration platform designed to help teams work smarter together.
+            </p>
+
+            <p class="message-text">
+                You've been invited as a <span class="role-badge">{{role}}</span> for the project 
+                <span class="highlight">{{projectName}}</span>.
+            </p>
+
+            {{!-- <!-- Personal Message (if provided) -->
+            <div class="personal-message">
+                <div class="personal-message-label">Personal Message from [ADMIN_NAME]</div>
+                <p>[PERSONAL_MESSAGE]</p>
+            </div> --}}
+
+            <div class="divider"></div>
+
+            <!-- CTA Button -->
+            <div class="cta-container">
+                <a href={{invitationLink}} class="cta-button">Accept Invitation</a>
+            </div>
+
+            <p class="message-text" style="text-align: center; font-size: 14px; color: #64748b;">
+                This invitation will expire in 7 days
+            </p>
+
+            <!-- Info Box -->
+            <div class="info-box">
+                <h3>What you'll get with Hora:</h3>
+                <ul>
+                    <li>📊 Powerful project management tools</li>
+                    <li>⏰ Integrated time tracking</li>
+                    <li>📅 Smart calendar and scheduling</li>
+                    <li>🎯 Goal setting and progress tracking</li>
+                    <li>👥 Seamless team collaboration</li>
+                </ul>
+            </div>
+
+            <p class="message-text" style="font-size: 14px; color: #64748b;">
+                If you have any questions or need help getting started, our support team is here to help at 
+                <a href="mailto:support@hora.app" style="color: #667eea; text-decoration: none; font-weight: 600;">support@hora.app</a>
+            </p>
+        </div>
+
+        <!-- Footer -->
+        <div class="email-footer">
+            <p><strong>Hora</strong> - Time Management Platform</p>
+            <p>© 2025 Hora. All rights reserved.</p>
+            
+            <div class="footer-links">
+                <a href="[PRIVACY_POLICY_LINK]">Privacy Policy</a>
+                <a href="[TERMS_LINK]">Terms of Service</a>
+                <a href="[HELP_CENTER_LINK]">Help Center</a>
+            </div>
+
+            <p style="margin-top: 20px; font-size: 12px; color: #94a3b8;">
+                If you weren't expecting this invitation, you can safely ignore this email.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

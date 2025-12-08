@@ -2,7 +2,7 @@ import express from "express";
 import { dbConfig } from "./db/dbConfig.js";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
-import projectRoutes from "./routes/projectRoutes.js";
+import projectRoutes from "./routes/projectRoutes/projectRoutes.js";
 import ticketRoutes from "./routes/ticketRoutes.js";
 import emailRoutes from "./routes/emailRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
@@ -10,8 +10,11 @@ import userRoutes from "./routes/UserRoutes/userRoutes.js"
 import cors from "cors";
 import keyValueRoute from "./routes/keyValuePairRoutes.js";
 import githubrouter from "./routes/Github/githubreporoutes.js";
+import inviteRoutes from "./routes/inviteRoutes.js";
 import "./cronjs/cronjob.js";
-
+import guiRoutes from './routes/GUI_routes/guiRoutes.js';
+// import aiRouter from "./routes/alRoute/aiRoute.js";
+import googleLoginRoute from "./routes/SSO/googleLogin.js";
 // import { MongoClient } from 'mongodb';
 // import bodyParser from 'body-parser';
 // import dotenv from 'dotenv';
@@ -92,6 +95,16 @@ app.use("/api/platform", keyValueRoute);
 app.use("/api/platform", userRoutes);
 // for github intregation 
 app.use("/api/gihub-repo",githubrouter)
+// app.use("/api/partner",inviteRoutes);
+app.use("/api/partner",inviteRoutes);
+app.use("/api/auth/sso", googleLoginRoute);
+
 app.get("/server", (req, res) => {
   res.send("Hello World!");
-});
+  
+}
+
+
+);
+app.use('/api/gui',guiRoutes);
+// table/otp
