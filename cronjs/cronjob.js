@@ -49,7 +49,7 @@ function hitBackend() {
 }
 
 // ⏰ Schedule the job to run every 15 minutes
-cron.schedule("*/15 * * * *", () => {
+cron.schedule("0 * * * *", () => {
   console.log(`[${getTimestamp()}] 🔄 Running cron job to hit backend...`);
-  hitBackend();
+  // hitBackend();
 });

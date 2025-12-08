@@ -11,6 +11,7 @@ import cors from "cors";
 import keyValueRoute from "./routes/keyValuePairRoutes.js";
 import githubrouter from "./routes/Github/githubreporoutes.js";
 import inviteRoutes from "./routes/inviteRoutes.js";
+import sprintRoutes from "./routes/SprintRoutes/sprintRouteV1.js"
 import "./cronjs/cronjob.js";
 import guiRoutes from './routes/GUI_routes/guiRoutes.js';
 // import aiRouter from "./routes/alRoute/aiRoute.js";
@@ -98,6 +99,9 @@ app.use("/api/gihub-repo",githubrouter)
 // app.use("/api/partner",inviteRoutes);
 app.use("/api/partner",inviteRoutes);
 app.use("/api/auth/sso", googleLoginRoute);
+
+//sprint routes
+app.use("/api/sprint", sprintRoutes);
 
 app.get("/server", (req, res) => {
   res.send("Hello World!");
