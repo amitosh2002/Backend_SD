@@ -13,7 +13,10 @@ import {
   removeLabel,
   previewTicketKey,
   createTicketV2,
+  getTicketByQuery,
+  addStoryPoint,
 } from "../controllers/ticketController.js";
+import { authenticateToken } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
@@ -29,6 +32,10 @@ router.post("/v1/tickets/:id/status", setStatus);
 router.post("/v1/tickets/:id/assignee", setAssignee);
 router.post("/v1/tickets/:id/priority", setPriority);
 router.post("/v1/tickets/:id/labels/add", addLabel);
-router.post("/v1/tickets/:id/labels/remove", removeLabel);
+router.post("/v1/tickets/:id/labels/add", addLabel);
+
+router.get("/v1/tickets/fetch/searchTicket",authenticateToken, getTicketByQuery);
+router.post("/v1/tickets/update/storyPoint",authenticateToken, addStoryPoint);
+
 
 export default router;

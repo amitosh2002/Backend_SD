@@ -6,6 +6,7 @@ import {
   sendVerificationOTP,
   sendPasswordResetOTP,
 } from "../services/emailService.js";
+import { UserWorkAccess } from "../models/PlatformModel/UserWorkAccessModel.js";
 
 // Generate JWT token
 const generateToken = (userId, role) => {
@@ -110,66 +111,145 @@ const verifyOTPRecord = async (email, otpCode) => {
 };
 
 // User registration
+// const register = async (req, res) => {
+//   try {
+//       const { data } = req.body;
+//       if (!data) {
+//         return res.status(400).json({ message: "Invalid request body" });
+//       }
+
+//       const { username, email, password, phone, firstName, lastName } = data;
+//     console.log(req.body,"body for register")
+
+//     // Check if user already exists
+//     const existingUser = await User.findOne({
+//       $or: [{ email },],
+//     });
+
+//     if (existingUser) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User with this email, username, or phone already exists",
+//       });
+//     }
+
+//     // Create new user
+//     const user = new User({
+//       username,
+//       email,
+//       password,
+//       phone,
+//       profile: { firstName, lastName },
+//     });
+
+//     // Generate OTP for verification
+//     const otpCode = generateOTPCode();
+
+//     // Save user first
+//     await user.save();
+
+//     // Create OTP record
+//     await createOTPRecord(email, otpCode);
+
+//     // Send verification email
+//     try {
+//       await sendVerificationOTP(
+//         email,
+//         {
+//           firstName,
+//           username,
+//           email,
+//         },
+//         otpCode
+//       );
+//     } catch (emailError) {
+//       console.error("Failed to send verification email:", emailError);
+//       // Continue with user creation even if email fails
+//     }
+
+//     res.status(201).json({
+//       success: true,
+//       message:
+//         "User registered successfully. Please check your email for verification code.",
+//       user: {
+//         id: user._id,
+//         username: user.username,
+//         email: user.email,
+//         phone: user.phone,
+//         isVerified: user.isVerified,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Registration error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Registration failed",
+//       error: error.message,
+//     });
+//   }
+// };
 const register = async (req, res) => {
   try {
-      const { data } = req.body;
-      if (!data) {
-        return res.status(400).json({ message: "Invalid request body" });
-      }
+    const { data } = req.body;
+    if (!data) {
+      return res.status(400).json({ message: "Invalid request body" });
+    }
 
-      const { username, email, password, phone, firstName, lastName } = data;
-    console.log(req.body,"body for register")
+    const { username, email, password, phone, firstName, lastName } = data;
 
-    // Check if user already exists
+    // --- Check if user already exists ---
     const existingUser = await User.findOne({
       $or: [{ email }, { username }, { phone }],
     });
 
     if (existingUser) {
+      let field = '';
+      if (existingUser.email === email) field = 'email';
+      else if (existingUser.username === username) field = 'username';
+      else if (existingUser.phone === phone) field = 'phone number';
+
       return res.status(400).json({
         success: false,
-        message: "User with this email, username, or phone already exists",
+        message: `User with this ${field} already exists.`,
       });
     }
 
-    // Create new user
+    // --- Create new user ---
     const user = new User({
       username,
       email,
       password,
       phone,
       profile: { firstName, lastName },
+      isVerified: false,
     });
 
-    // Generate OTP for verification
-    const otpCode = generateOTPCode();
-
-    // Save user first
     await user.save();
 
-    // Create OTP record
-    await createOTPRecord(email, otpCode);
+    // --- Update pending invitations for this email ---
+    await UserWorkAccess.updateMany(
+      { userId: null, invitedEmail: email }, // assuming you store invited email
+      { $set: { userId: user._id, status: "accepted" } } // mark as accepted
+    );
 
-    // Send verification email
+    // --- Generate OTP and send verification email ---
+    const otpCode = generateOTPCode();
+    await createOTPRecord(email, otpCode);
     try {
       await sendVerificationOTP(
         email,
-        {
-          firstName,
-          username,
-          email,
-        },
+        { firstName, username, email },
         otpCode
       );
     } catch (emailError) {
       console.error("Failed to send verification email:", emailError);
-      // Continue with user creation even if email fails
     }
 
+    // --- Return response ---
     res.status(201).json({
       success: true,
       message:
-        "User registered successfully. Please check your email for verification code.",
+        "Registration successful. Your account is created but requires verification. Please check your email for the verification code.",
       user: {
         id: user._id,
         username: user.username,
@@ -187,6 +267,7 @@ const register = async (req, res) => {
     });
   }
 };
+
 
 // Send OTP for login
 const sendLoginOTP = async (req, res) => {
@@ -741,6 +822,56 @@ const logout = async (req, res) => {
   }
 };
 
+// Validate token
+const validateToken = async (req, res) => {
+  try {
+    const token = req.body.token || (req.headers["authorization"] && req.headers["authorization"].split(" ")[1]);
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: "Token required" });
+    }
+
+    // Verify JWT
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET || "your-secret-key");
+    } catch (e) {
+      return res.status(401).json({ success: false, message: "Invalid or expired token" });
+    }
+
+    // Ensure token is not revoked
+    const session = await TokenModel.findOne({ token, isRevoked: false }).populate("user");
+    if (!session) {
+      return res.status(401).json({ success: false, message: "Session revoked or not found" });
+    }
+
+    const user = session.user;
+    
+    // Check if user is still active
+    if (!user.isActive) {
+      return res.status(401).json({ success: false, message: "User account is deactivated" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        isVerified: user.isVerified,
+        profile: user.profile,
+        lastLogin: user.lastLogin,
+        createdAt: user.createdAt,
+      }
+    });
+  } catch (error) {
+    console.error("Token validation error:", error);
+    res.status(500).json({ success: false, message: "Token validation failed", error: error.message });
+  }
+};
+
 // Fetch user details by token
 const getUserByToken = async (req, res) => {
   try {
@@ -806,5 +937,6 @@ export {
   forgotPassword,
   resetPassword,
   logout,
+  validateToken,
   getUserByToken,
 };

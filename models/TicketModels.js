@@ -33,7 +33,7 @@ const ENUMS =[
   "OPEN",
     "IN_PROGRESS",
     "IN_REVIEW",
-    "DEV TESTING",
+    "DEV_TESTING",
     "RESOLVED",
     "M1 TESTING COMPLETED",
     "M2 TESTING COMPLETED",
@@ -46,6 +46,19 @@ const ENUMS =[
 
 const TicketSchema = new mongoose.Schema(
   {
+
+     partnerId: {
+        type: String,
+        ref: 'Partner', // Reference your Partner model
+        required: [true, "Partner ID is required for the ticket context"],
+        index: true,
+    },
+    projectId: {
+        type: String,
+        ref: 'Project', // Reference your Project model
+        required: [true, "Project ID is required for the ticket context"],
+        index: true,
+    },
     title: {
       type: String,
       required: [true, "Ticket title is required"],
@@ -53,16 +66,18 @@ const TicketSchema = new mongoose.Schema(
       maxlength: [200, "Title cannot exceed 200 characters"],
       minlength: [3, "Title must be at least 3 characters long"],
     },
-    type: {
-      type: String,
-      required: [true, "Ticket type is required"],
-      trim: true,
-      uppercase: true,
-      enum: {
+ type: {
+    type: String,
+    required: [true, "Ticket type is required"],
+    trim: true,
+    
+    set: (val) => val ? val.toUpperCase() : val, 
+    
+    enum: {
         values: TICKET_TYPES,
         message: "Invalid ticket type. Must be one of: {VALUE}",
-      },
     },
+},
     sequenceNumber: {
       type: Number,
       required: false,
@@ -201,39 +216,50 @@ TicketSchema.virtual("ageInDays").get(function () {
 });
 
 // Pre-validation middleware to assign sequence number and generate ticket key
+// Pre-validation middleware to assign sequence number and generate ticket key
+// Pre-validation middleware to assign sequence number and generate ticket key
 TicketSchema.pre("validate", async function assignSequenceAndKey(next) {
-  try {
-    // Only run for new documents
-    if (!this.isNew) return next();
+    try {
+        // Only run for new documents
+        if (!this.isNew) return next();
 
-    // Ensure required fields
-    if (!this.type) return next(new Error("Ticket type is required"));
-    if (!this.title) return next(new Error("Ticket title is required"));
+        // If already set (e.g., during migration or manual assignment), skip
+        if (this.sequenceNumber && this.ticketKey) return next();
 
-    // If already set (e.g., during migration or manual assignment), skip
-    if (this.sequenceNumber && this.ticketKey) return next();
+        // 💡 FIX: Check if required fields are present before using them.
+        // This is necessary because Mongoose's final 'required' check runs later.
+        if (!this.type) {
+            // Mongoose will catch the 'required' error later, but we prevent an early middleware crash.
+            return next(); 
+        }
+        if (!this.title) {
+            return next();
+        }
+        
+        // At this point, this.type is guaranteed to be a non-empty, uppercased string
+        // (due to the setter in the schema definition).
 
-    // Get next sequence number for this ticket type
-    const counter = await CounterModel.findByIdAndUpdate(
-      this.type.toUpperCase(),
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true }
-    );
+        // Get next sequence number for this ticket type
+        const counter = await CounterModel.findByIdAndUpdate(
+            this.type, // Use the now-uppercased type as the ID
+            { $inc: { seq: 1 } },
+            { new: true, upsert: true }
+        );
 
-    this.sequenceNumber = counter.seq;
+        this.sequenceNumber = counter.seq;
 
-    // Generate ticket key without padding; type upper, slug lower
-    const sequence = String(this.sequenceNumber);
-    const slugifiedTitle = slugifyTitle(this.title);
-    this.ticketKey = `${this.type.toUpperCase()}-${sequence}-${slugifiedTitle}`;
+        // Generate ticket key (this.type is already uppercase)
+        const sequence = String(this.sequenceNumber);
+        const slugifiedTitle = slugifyTitle(this.title);
+        // 💡 FIX: Use this.type directly, as it's already uppercased.
+        this.ticketKey = `${this.type}-${sequence}-${slugifiedTitle}`; 
 
-    return next();
-  } catch (err) {
-    console.error("Error in assignSequenceAndKey middleware:", err);
-    return next(err);
-  }
-});
-
+        return next();
+    } catch (err) {
+        console.error("Error in assignSequenceAndKey middleware:", err);
+        return next(err);
+    }
+});;
 // Pre-save middleware for logging changes
 TicketSchema.pre("save", function (next) {
   if (!this.isNew && this.isModified()) {
@@ -257,6 +283,9 @@ TicketSchema.index({ type: 1, sequenceNumber: 1 }, { unique: true });
 TicketSchema.index({ ticketKey: 1 }, { unique: true, sparse: true });
 TicketSchema.index({ status: 1, priority: 1 });
 TicketSchema.index({ assignee: 1, status: 1 });
+
+// TicketSchema.index({ partnerId: 1, projectId: 1, status: 1 }); // New index for fast queries
+// TicketSchema.index({ assignee: 1, status: 1, partnerId: 1 }); // Improved assignee query
 TicketSchema.index({ createdAt: -1 });
 
 // Static method to get next ticket key preview

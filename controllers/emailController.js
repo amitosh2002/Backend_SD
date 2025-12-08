@@ -246,6 +246,7 @@ class EmailController {
     }
   }
 
+
   // Test email endpoint
   static async testEmail(req, res) {
     try {

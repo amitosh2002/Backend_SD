@@ -11,6 +11,7 @@ import {
   updateProfile,
   changePassword,
   logout,
+  validateToken,
   getUserByToken,
 } from "../controllers/authController.js";
 import {
@@ -30,8 +31,11 @@ router.post("/verify-account", verifyAccount);
 router.post("/forgot-password", otpRateLimit, forgotPassword);
 router.post("/reset-password", resetPassword);
 
+// Token validation route
+router.post("/validate-token", validateToken);
+
 // Fetch user by token (can be used by services); accepts token in param or header
-router.post("/session/getuser", authenticateToken,getUserByToken);
+router.post("/session/getUser", authenticateToken, getUserByToken);
 
 // Protected routes (authentication required)
 router.get("/profile", authenticateToken, getProfile);
