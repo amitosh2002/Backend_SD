@@ -25,7 +25,7 @@ const generateOTPCode = () => {
 };
 
 // Helper to persist token session
-const persistTokenSession = async (user, token, req) => {
+ const persistTokenSession = async (user, token, req) => {
   try {
     const decoded = jwt.decode(token);
     const expiresAt = decoded && decoded.exp ? new Date(decoded.exp * 1000) : undefined;
@@ -939,4 +939,5 @@ export {
   logout,
   validateToken,
   getUserByToken,
+  persistTokenSession
 };
