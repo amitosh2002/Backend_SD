@@ -18,9 +18,6 @@ router.post("/google-login", async (req, res) => {
       });
     }
 
-        console.log("first sso user creation  ")
-
-
     // Verify Google token
     const ticket = await client.verifyIdToken({
       idToken: token,
@@ -28,53 +25,75 @@ router.post("/google-login", async (req, res) => {
     });
 
     const payload = ticket.getPayload();
-
     const email = payload.email;
     const name = payload.name;
     const picture = payload.picture;
 
-    // 🔍 Check if user already exists (Mongoose)
+    // Find user
     let user = await User.findOne({ email });
 
-    // 🆕 Auto-register new Google user
+    // Auto-register if not found
     if (!user) {
-        console.log("first sso user creation if ")
       user = await User.create({
         username: name,
         email,
         googleId: payload.sub,
+        isVerified: true,
+        isActive: true,
         profile: {
           firstName: name.split(" ")[0],
           lastName: name.split(" ")[1] || "",
           avatar: picture,
         },
-        isVerified: true,
-        isActive:true,
       });
 
-          // --- Update pending invitations for this email ---
-          await UserWorkAccess.updateMany(
-            { userId: null, invitedEmail: email }, // assuming you store invited email
-            { $set: { userId: user._id, status: "accepted" } } // mark as accepted
-          );
-      
+      // Attach pending invitations
+      await UserWorkAccess.updateMany(
+        { userId: null, invitedEmail: email },
+        { $set: { userId: user._id, status: "accepted" } }
+      );
     }
 
+    // ❗ Account checks (same as your OTP login)
+    if (user.isLocked && user.isLocked()) {
+      return res.status(423).json({
+        success: false,
+        message: "Account locked due to failed attempts",
+      });
+    }
 
+    if (!user.isActive) {
+      return res.status(423).json({
+        success: false,
+        message: "Account is deactivated",
+      });
+    }
 
-    // 🔑 Sign JWT
-    const appToken = jwt.sign(
-      { id: user._id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-        console.log("first sso user creation end ")
+    // Update last login
+    user.lastLogin = new Date();
+    await user.save();
 
+    // Create App Auth Token (same as OTP flow)
+    const appToken = generateToken(user._id, user.role);
 
-    return res.json({
+    // Store token session (CRITICAL!)
+    await persistTokenSession(user, appToken, req);
+
+    // Final response (consistent with OTP login)
+    return res.status(200).json({
       success: true,
+      message: "Google login successful",
+      requiresRegistration: false,
       token: appToken,
-      user,
+      // user: {
+      //   id: user._id,
+      //   username: user.username,
+      //   email: user.email,
+      //   phone: user.phone,
+      //   role: user.role,
+      //   isVerified: user.isVerified,
+      //   profile: user.profile,
+      // },
     });
 
   } catch (err) {
@@ -82,6 +101,7 @@ router.post("/google-login", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Google login failed",
+      error: err.message,
     });
   }
 });
