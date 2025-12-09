@@ -3,7 +3,7 @@ import { OAuth2Client } from "google-auth-library";
 import jwt from "jsonwebtoken";
 import User from "../../models/UserModel.js";  // <-- fix path + .js
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
-import { generateToken } from "../../controllers/authController.js";
+import { generateToken, persistTokenSession } from "../../controllers/authController.js";
 
 const router = express.Router();
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
