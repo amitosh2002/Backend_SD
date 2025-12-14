@@ -1,4 +1,8 @@
+import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js";
+import { TicketModel } from "../models/TicketModels.js";
+
 export function getWeekNumber(date) {
+
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   // Set to nearest Thursday: current date + 4 - current day number (0=Sun, 1=Mon, etc.)
   d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
@@ -173,3 +177,179 @@ export function analyzeCurrentWeekAndMonthLogs(allTimeLogs) {
       return "Admin"
     }
   }
+
+
+
+/**
+ * Close active sprint & activate next sprint
+ * @param {String} projectId
+ * @param {String} partnerId
+ */
+export const closeSprintAndActivateNext = async (
+  projectId,
+  partnerId
+) => {
+  const session = await partnerSprint.startSession();
+  session.startTransaction();
+
+  try {
+    // 1️⃣ Find active sprint
+    const activeSprint = await partnerSprint.findOne({
+      projectId,
+      partnerId,
+      isActive: true,
+    }).session(session);
+
+    if (!activeSprint) {
+      await session.abortTransaction();
+      session.endSession();
+      return {
+        success: false,
+        message: "No active sprint found",
+      };
+    }
+
+    // 2️⃣ Close active sprint
+    activeSprint.isActive = false;
+    await activeSprint.save({ session });
+
+    // 3️⃣ Find next sprint (by sprintNumber)
+    const nextSprint = await partnerSprint.findOne({
+      projectId,
+      partnerId,
+      sprintNumber: activeSprint.sprintNumber + 1,
+    }).session(session);
+
+    // 4️⃣ Activate next sprint (if exists)
+    if (nextSprint) {
+      nextSprint.isActive = true;
+      await nextSprint.save({ session });
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return {
+      success: true,
+      closedSprint: activeSprint.sprintName,
+      activatedSprint: nextSprint ? nextSprint.sprintName : null,
+    };
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+
+    throw error;
+  }
+};
+
+
+
+export const getSprintContext = async (projectId) => {
+  const current = await partnerSprint.findOne({
+    projectId,
+    isActive: true,
+  });
+
+  if (!current) return null;
+
+  const previous = await partnerSprint.findOne({
+    projectId,
+    sprintNumber: current.sprintNumber - 1,
+  });
+
+  const next = await partnerSprint.findOne({
+    projectId,
+    sprintNumber: current.sprintNumber + 1,
+  });
+
+  return { current, previous, next };
+};
+
+
+export const getAppSprintAnalytics = async (sprintId) => {
+  try {
+    if (!sprintId) {
+      throw new Error("Sprint ID required");
+    }
+
+    // Fetch sprint detail
+    const sprint = await partnerSprint.findOne({id:sprintId}).lean();
+    if (!sprint) {
+      throw new Error("Sprint not found");
+    }
+
+    // Fetch tasks associated with the sprint's project
+    const tasks = await TicketModel.find({ projectId: sprint.projectId }).lean();
+    if (!tasks || tasks.length === 0) {
+      throw new Error("No associated work found for the sprint");
+    }
+
+    // Initialize counters
+    let totalStoryPoint = 0;
+    let completedStoryPoint = 0;
+    let totalTaskInSprint = tasks.length;
+    let completedTaskInSprint = 0;
+    let totalOpenTaskInSprint = 0;
+    let totalInProgressTaskInSprint = 0;
+    let resolvedTaskInSprint = 0;
+    let totalClosedTaskInSprint = 0;
+    let totalTicketInTestingInSprint = 0;
+
+    tasks.forEach((task) => {
+      const estimate = task.estimatePoints || 0;
+      totalStoryPoint += estimate;
+
+      switch (task.status) {
+        case "OPEN":
+          totalOpenTaskInSprint += 1;
+          break;
+        case "IN_PROGRESS":
+          totalInProgressTaskInSprint += 1;
+          break;
+        case "RESOLVED":
+          resolvedTaskInSprint += 1;
+          break;
+        case "CLOSED":
+          totalClosedTaskInSprint += 1;
+          completedStoryPoint += estimate;
+          completedTaskInSprint += 1;
+          break;
+      }
+
+      if (task.status && task.status.includes("TESTING")) {
+        totalTicketInTestingInSprint += 1;
+      }
+    });
+
+    const taskCompletionPercent = totalTaskInSprint > 0 ? (completedTaskInSprint / totalTaskInSprint) * 100 : 0;
+const avgStoryPointPerTask = totalTaskInSprint > 0 ? totalStoryPoint / totalTaskInSprint : 0;
+const daysRemaining = Math.ceil((sprint.endDate - new Date()) / (1000 * 60 * 60 * 24));
+
+
+    const remainingStoryPoint = totalStoryPoint - completedStoryPoint;
+    const velocityPercent = totalStoryPoint > 0 ? (completedStoryPoint / totalStoryPoint) * 100 : 0;
+    // Prepare result
+    const sprintAnalytics = {
+      sprintId,
+      totalStoryPoint,
+      velocityPercent: velocityPercent.toFixed(2),
+      completedStoryPoint,
+      remainingStoryPoint,
+      totalTaskInSprint,
+      completedTaskInSprint,
+      totalOpenTaskInSprint,
+      totalInProgressTaskInSprint,
+      resolvedTaskInSprint,
+      totalClosedTaskInSprint,
+      totalTicketInTestingInSprint,
+      taskCompletionPercent: taskCompletionPercent.toFixed(2),
+      avgStoryPointPerTask: avgStoryPointPerTask.toFixed(2),
+      daysRemaining,
+    };
+
+    return sprintAnalytics;
+  } catch (error) {
+    console.error("Error in getAppSprintAnalytics:", error.message);
+    throw error;
+  }
+};

@@ -3,6 +3,7 @@ import User from "../models/UserModel.js";
 import   {UserWorkAccess} from "../models/PlatformModel/UserWorkAccessModel.js";
 import mongoose from "mongoose";
 import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
+import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js";
 
 export const createTicket = async (req, res) => {
   try {
@@ -260,14 +261,34 @@ export const listTickets = async (req, res) => {
 
     // Step 4: Query tickets
     const [items, total] = await Promise.all([
-      TicketModel.find(filters)
-        .sort({ createdAt: -1 })
-        .skip((numericPage - 1) * numericLimit)
-        .limit(numericLimit)
-        .lean(),
-      TicketModel.countDocuments(filters),
-    ]);
-    
+            TicketModel.find(filters)
+              .sort({ createdAt: -1 })
+              .skip((numericPage - 1) * numericLimit)
+              .limit(numericLimit)
+              .lean(),
+            TicketModel.countDocuments(filters),
+          ]);
+
+          const sprintIds = items
+            .map(ticket => ticket.sprint)
+            .filter(Boolean);
+            console.log(sprintIds)
+
+          if (sprintIds.length) {
+            const sprints = await partnerSprint
+              .find({ id: { $in: sprintIds } })
+              .lean();
+            console.log(sprints)
+            const sprintMap = {};
+            sprints.forEach(sprint => {
+              sprintMap[sprint.id] = sprint;
+            });
+
+            items.forEach(ticket => {
+              ticket.sprint = sprintMap[ticket.sprint]?.sprintName || "";
+            });
+          }
+
     // Step 5: Return response
     return res.status(200).json({
       page: numericPage,
@@ -523,7 +544,8 @@ export const previewTicketKey = async (req, res) => {
  * @param {object} res - Express response object
  */
 export const getTicketByQuery = async (req, res) => {
-    // 1. Destructure and Clean 
+    // 1. Destructure and Clean '
+    console.log(req.user.userId)
     const { query } = req.query;
     console.log(req.query,"search query")
     // const { q, partnerId, projectId } = req.query;
