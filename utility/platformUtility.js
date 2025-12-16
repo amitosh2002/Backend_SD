@@ -299,7 +299,7 @@ export const getAppSprintAnalytics = async (sprintId) => {
       const estimate = task.estimatePoints || 0;
       totalStoryPoint += estimate;
 
-      switch (task.status) {
+      switch (task?.status) {
         case "OPEN":
           totalOpenTaskInSprint += 1;
           break;
