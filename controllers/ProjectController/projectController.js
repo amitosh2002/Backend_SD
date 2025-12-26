@@ -11,14 +11,16 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import User from "../../models/UserModel.js";
 import { sendInvitationEmail } from "../../services/emailService.js";
-import { accesTypeView } from "../../utility/platformUtility.js";
+import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow } from "../../utility/platformUtility.js";
 import { TicketModel } from "../../models/TicketModels.js";
 
 // import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
 export const createProject = async (req, res) => {
   try {
-    const { projectData,userId } = req.body;
+    const { projectData } = req.body;
+    // Prefer server-derived user id from auth token to avoid trusting client payload
+    const userId = req.body.userId || (req.user && req.user.userId);
     //payload for project creation
 //     Project Created with answers: 
 // {projectName: 'hbsshbjhs', projectType: 'mobile', description: 'sdjbfvdsjfjdsfs', teamSize: 'large', timeline: 'year'}
@@ -59,16 +61,23 @@ export const createProject = async (req, res) => {
     })
   
     // Create a new project instance
-    const newProject =   new ProjectModel({
-      partnerId:checkPartner  && userAccess.accessType >200 ? checkPartner.partnerId : "" ,
-      projectName:projectData.projectName,
-      description:projectData.description,
-      projectType:projectData.projectType,
-      status:'active',
-      teamSize:projectData.teamSize,
-      partnerCode:checkPartner  && userAccess.accessType >200 ? checkPartner.partnerCode : "" ,
-      startDate: Date.now(), // Ensure startDate is a Date object
-    });
+const newProject = new ProjectModel({
+  partnerId:
+    checkPartner && userAccess?.accessType > 200
+      ? checkPartner.partnerId
+      : "",
+  projectName: projectData.projectName,
+  description: projectData.description,
+  projectType: projectData.projectType,
+  status: "active",
+  teamSize: projectData.teamSize,
+  partnerCode:
+    checkPartner && userAccess?.accessType > 200
+      ? checkPartner.partnerCode
+      : "",
+  startDate: Date.now(),
+});
+  
 
     // Save the project to the database
     await newProject.save();
@@ -80,6 +89,20 @@ export const createProject = async (req, res) => {
       status:'accepted',
       invitedBy:userId,
     });
+
+    // adding default flow and sprint board 
+      try {
+      console.log("Calling autoCreateDefaultBoardAndFlow for project:", newProject.projectId, "user:", userId);
+      await autoCreateDefaultBoardAndFlow({
+        projectId: newProject.projectId,
+        userId: userId,
+        workflowSource: "PROJECT",
+      });
+      console.log("autoCreateDefaultBoardAndFlow completed for project:", newProject.projectId);
+    } catch (err) {
+      console.error("autoCreateDefaultBoardAndFlow failed:", err);
+      // don't block project creation on board/flow creation failure
+    }
 
     res.status(201).json({ message: 'Project created successfully', project: newProject });
   } catch (error) {
@@ -531,6 +554,334 @@ export const invitationDetails = async (req, res) => {
       success: false,
       message: "Server error",
       error: error.message,
+    });
+  }
+};
+
+
+
+// sprint board and flow for project 
+
+
+/**
+ * GET /api/platform/v1/scrum-flow/:projectId
+ */
+export const getStatusFlowForProject = async (req, res) => {
+  try {
+    const { projectId } = req.body;
+
+    console.log("[ScrumFlow] Fetching flow for project:", projectId);
+
+    // 1️⃣ Try project-specific flow
+    let flow = await ScrumProjectFlow.findOne({
+      projectId,
+      isActive: true,
+      sourceType: "PROJECT",
+    }).lean();
+
+    // 2️⃣ Fallback to DEFAULT / TEMPLATE flow
+    if (!flow) {
+      console.log("[ScrumFlow] Project flow not found, using TEMPLATE");
+      flow = await ScrumProjectFlow.findOne({
+        projectId: "DEFAULT",
+        isActive: true,
+        sourceType: "TEMPLATE",
+      }).lean();
+    }
+
+    if (!flow) {
+      return res.status(404).json({
+        message: "No scrum flow found",
+      });
+    }
+
+    // 3️⃣ Normalize flow → dropdown config
+    const dropdownConfig = buildDropdownConfigFromFlow(flow);
+
+    return res.status(200).json({
+      projectId,
+      flowId: flow.id,
+      flowName: flow.flowName,
+      ...dropdownConfig,
+    });
+  } catch (error) {
+    console.error("[ScrumFlow] Error:", error);
+    return res.status(500).json({
+      message: "Failed to fetch scrum flow",
+    });
+  }
+};
+
+
+
+export const getSprintBoardFlowForProject = async (req, res) => {
+  try {
+    const { projectId } = req.body;
+
+    console.log("[SprintBoard] Fetching board for project:", projectId);
+
+    // 1️⃣ Try project-specific board
+    let board = await SprintBoardConfigSchema.findOne({
+      projectId,
+      isActive: true,
+      workflowSource: "PROJECT",
+    }).lean();
+
+    // 2️⃣ Fallback to default board
+    if (!board) {
+      console.log("[SprintBoard] Project board not found, using default TEMPLATE");
+      board = await SprintBoardConfigSchema.findOne({
+        projectId: "DEFAULT",
+        isActive: true,
+        workflowSource: "TEMPLATE",
+      }).lean();
+    }
+
+    if (!board) {
+      return res.status(404).json({
+        message: "No sprint board found",
+      });
+    }
+
+    // 3️⃣ Normalize board → dropdown config or frontend-ready structure
+    const columnsSorted = [...board.columns].sort((a, b) => a.order - b.order);
+
+    const statusColors = {};
+    const statusWorkflow = {};
+    const ticketFlowTypes = new Set();
+
+    columnsSorted.forEach((column, index) => {
+      const currentStatuses = column.statusKeys;
+      const nextColumnStatuses = columnsSorted[index + 1]?.statusKeys || [];
+
+      currentStatuses.forEach((status) => {
+        ticketFlowTypes.add(status);
+
+        if (!statusColors[status]) {
+          statusColors[status] = {
+            bg: `${column.color}22`,
+            text: column.color,
+            border: column.color,
+          };
+        }
+
+        statusWorkflow[status] = Array.from(
+          new Set([...currentStatuses, ...nextColumnStatuses])
+        ).filter((s) => s !== status);
+      });
+    });
+
+    return res.status(200).json({
+      projectId,
+      boardId: board.id,
+      boardName: board.boardName,
+      columns: columnsSorted,
+      statusColors,
+      statusWorkflow,
+      ticketFlowTypes: Array.from(ticketFlowTypes),
+    });
+  } catch (error) {
+    console.error("[SprintBoard] Error:", error);
+    return res.status(500).json({
+      message: "Failed to fetch sprint board",
+    });
+  }
+};
+
+
+export const getUserAnalyticsAgg = async (req, res) => {
+  const userId = req.user.userId;
+  console.log(userId,"userid ")
+  try {
+    let { startDate, endDate } = req.query;
+
+    // -------------------------------
+    // DEFAULT DATE RANGE (LAST 30 DAYS)
+    // -------------------------------
+    const now = new Date();
+
+    if (!startDate && !endDate) {
+      endDate = now;
+      startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    } else {
+      endDate = endDate ? new Date(endDate) : now;
+      startDate = startDate
+        ? new Date(startDate)
+        : new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+    }
+
+    // const pipeline = [
+    //   {
+    //     $match: {
+    //       $or: [
+    //         { assignee: userId },
+    //         { "timeLogs.loggedBy": userId }
+    //       ]
+    //     }
+    //   },
+
+    //   {
+    //     $addFields: {
+    //       filteredTimeLogs: {
+    //         $filter: {
+    //           input: "$timeLogs",
+    //           as: "log",
+    //           cond: {
+    //             $and: [
+    //               { $gte: ["$$log.at", startDate] },
+    //               { $lte: ["$$log.at", endDate] },
+    //               { $eq: ["$$log.loggedBy", userId] }
+    //             ]
+    //           }
+    //         }
+    //       }
+    //     }
+    //   },
+
+    //   {
+    //     $addFields: {
+    //       totalTimeLogged: {
+    //         $sum: "$filteredTimeLogs.minutes"
+    //       }
+    //     }
+    //   },
+
+    //   {
+    //     $lookup: {
+    //       from: "Projects",
+    //       localField: "projectId",
+    //       foreignField: "projectId",
+    //       as: "project"
+    //     }
+    //   },
+
+    //   {
+    //     $lookup: {
+    //       from: "PartnerSprint",
+    //       localField: "sprintId",
+    //       foreignField: "sprintId",
+    //       as: "sprint"
+    //     }
+    //   },
+
+    //   { $unwind: { path: "$project", preserveNullAndEmptyArrays: true } },
+    //   { $unwind: { path: "$sprint", preserveNullAndEmptyArrays: true } },
+
+    //   {
+    //     $group: {
+    //       _id: {
+    //         projectId: "$projectId",
+    //         sprintId: "$sprintId"
+    //       },
+    //       projectName: { $first: "$project.name" },
+    //       sprintName: { $first: "$sprint.name" },
+    //       totalTime: { $sum: "$totalTimeLogged" },
+    //       totalStoryPoints: {
+    //         $sum: {
+    //           $cond: [{ $eq: ["$status", "Done"] }, "$storyPoints", 0]
+    //         }
+    //       }
+    //     }
+    //   },
+
+    //   { $sort: { totalTime: -1 } }
+    // ];
+
+
+    const pipeline = [
+  {
+    $match: {
+      $or: [
+        { assignee: userId },
+        { "timeLogs.loggedBy": userId }
+      ]
+    }
+  },
+
+  {
+    $addFields: {
+      filteredTimeLogs: {
+        $filter: {
+          input: "$timeLogs",
+          as: "log",
+          cond: {
+            $and: [
+              { $gte: ["$$log.at", startDate] },
+              { $lte: ["$$log.at", endDate] },
+              { $eq: ["$$log.loggedBy", userId] }
+            ]
+          }
+        }
+      }
+    }
+  },
+
+  {
+    $addFields: {
+      totalTimeLogged: { $sum: "$filteredTimeLogs.minutes" }
+    }
+  },
+
+  {
+    $lookup: {
+      from: "projects",
+      localField: "projectId",
+      foreignField: "projectId",
+      as: "project"
+    }
+  },
+
+  {
+    $lookup: {
+      from: "partnersprints",
+      localField: "sprintId",
+      foreignField: "sprintId",
+      as: "sprint"
+    }
+  },
+
+  { $unwind: { path: "$project", preserveNullAndEmptyArrays: true } },
+  { $unwind: { path: "$sprint", preserveNullAndEmptyArrays: true } },
+
+  {
+    $group: {
+      _id: {
+        projectId: "$projectId",
+        sprintId: "$sprintId"
+      },
+      projectName: { $first: "$project.name" },
+      sprintName: { $first: "$sprint.name" },
+      totalTime: { $sum: "$totalTimeLogged" },
+      totalStoryPoints: {
+        $sum: {
+          $cond: [
+            { $eq: ["$status", "Done"] },
+            { $ifNull: ["$storyPoints", 0] },
+            0
+          ]
+        }
+      }
+    }
+  },
+
+  { $sort: { totalTime: -1 } }
+];
+
+    const data = await TicketModel.aggregate(pipeline);
+
+    res.status(200).json({
+      success: true,
+      meta: {
+        startDate,
+        endDate
+      },
+      data
+    });
+  } catch (err) {
+    console.error("User analytics error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
     });
   }
 };

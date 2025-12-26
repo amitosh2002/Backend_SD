@@ -39,7 +39,9 @@ import {
   runMigrationToAddProjectIdinTicket,
   runMigrationToCreatePartner,
   runMigrationToCreateProject,
-  runMigrationToAddUserAccess
+  runMigrationToAddUserAccess,
+  addDefaultSprintBoardConfig,
+  addDefaultSprintFlowConfig
 } from "../MIgration/migration.js";
 
 dotenv.config();
@@ -51,6 +53,8 @@ const migrations = {
   createProject: runMigrationToCreateProject,
   addProjectToTicket: runMigrationToAddProjectIdinTicket,
   addUserAccess: runMigrationToAddUserAccess,
+  sprintBoard:addDefaultSprintBoardConfig,
+  sprintFlow:addDefaultSprintFlowConfig
 };
 
 async function main() {

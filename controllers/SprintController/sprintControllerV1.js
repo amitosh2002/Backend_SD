@@ -56,7 +56,6 @@ export const createSprint = async (req, res) => {
         message: "Project not found",
       });
     }
-
     if (projectDetails?.isArchived) {
       return res.status(400).json({
         success: false,
@@ -315,7 +314,7 @@ export const assignSprintToProjectTicket = async (req, res) => {
     if (sprint.startDate > currentDate) {
       return res.status(400).json({ success: false, message: "Cannot assign ticket to a sprint that has not started yet" });
     }
-    if (sprint.startDate <currentDate) {
+    if (sprint.endDate <currentDate) {
       return res.status(400).json({ success: false, message: "Cannot assign ticket to a sprint that has completed" });
     }
     // fetching the ticket to be assigned
@@ -436,3 +435,4 @@ export const getProjectSprintOverview = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+

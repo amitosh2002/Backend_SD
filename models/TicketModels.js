@@ -209,7 +209,8 @@ const TicketSchema = new mongoose.Schema(
     sprint: {
       type: String,
       required: false,
-      ref:"PartnerSprint"
+      ref:"PartnerSprint",
+      default:null
     },
   },
   {

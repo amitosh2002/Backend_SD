@@ -4,6 +4,9 @@ import   {UserWorkAccess} from "../models/PlatformModel/UserWorkAccessModel.js";
 import mongoose from "mongoose";
 import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js";
+import ActivityLog from "../models/PlatformModel/ActivityLogModel.js";
+import { LogActionType, LogEntityType } from "../models/PlatformModel/Enums/ActivityLogEnum.js";
+import { getUserDetailById } from "../utility/platformUtility.js";
 
 export const createTicket = async (req, res) => {
   try {
@@ -103,11 +106,27 @@ export const createTicketV2 = async (req, res) => {
 
     await ticket.save();
 
+
+    // adding logs for ticket creation 
+
+    await ActivityLog.create(
+      {
+        userId:req.user.userId,
+        projectId:ticket.projectId,
+        actionType:LogActionType.TICKET_CREATE,
+        targetType:LogEntityType.TASK,
+        targetId:ticket.id ?? ticket._id,
+        changes:[{
+          newValue:ticket.ticketKey,
+        }],
+      }
+    )
+
     return res.status(201).json({
       success: true,
       message: "Ticket created successfully",
       data: {
-  id: ticket._id,
+        id: ticket._id,
         ticketKey: ticket.ticketKey,
         title: ticket.title,
         type: ticket?.type,
@@ -328,6 +347,19 @@ export const updateTicket = async (req, res) => {
       new: true,
       runValidators: true,
     });
+
+        await ActivityLog.create(
+      {
+        userId:req.user.userId,
+        projectId:updated.projectId,
+        actionType:LogActionType.TICKET_UPDATE,
+        targetType:LogEntityType.TASK,
+        targetId:id,
+        changes:[{
+          newValue:update,
+        }],
+      }
+    )
     if (!updated) return res.status(404).json({ message: "Ticket not found" });
     return res.status(200).json(updated);
   } catch (err) {
@@ -385,6 +417,19 @@ export const addTimeLog = async (req, res) => {
       { new: true, runValidators: true }
     );
 
+    // ====================== logs for timelog===============/
+       await ActivityLog.create(
+      {
+        userId:req.user.userId,
+        projectId:updatedTicket.projectId,
+        actionType:LogActionType.ADD_TIME_LOG,
+        targetType:LogEntityType.TASK,
+        targetId:ticketId,
+        changes:[{
+          newValue:durationMinutes,
+        }],
+      })
+
     // 3. Handle Not Found
     if (!updatedTicket) {
       return res.status(404).json({ message: `Ticket with ID ${ticketId} not found.` });
@@ -403,13 +448,35 @@ export const setStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    const updated = await TicketModel.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true, runValidators: true }
-    );
-    if (!updated) return res.status(404).json({ message: "Ticket not found" });
-    return res.status(200).json(updated);
+    // const updated = await TicketModel.findByIdAndUpdate(
+    //   id,
+    //   { status },
+    //   { new: true, runValidators: true }
+    // );
+
+    const ticket = await TicketModel.findById(id);
+
+    const prevStatus = ticket.status;
+ 
+    ticket.status = status;
+    await ticket.save();
+
+      await ActivityLog.create({
+        userId: req.user.userId,
+        projectId: ticket.projectId,
+        actionType: LogActionType.TICKET_TRANSITION,
+        targetType: LogEntityType.TASK,
+        targetId: ticket._id,
+        changes: 
+          {
+            field: 'status',
+            prevValue: prevStatus,
+            newValue: status,
+          },
+        
+      });
+    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+    return res.status(200).json({msg:"ticket status updated"});
   } catch (err) {
     console.error("Error setting status:", err);
     return res.status(500).json({ message: "Internal server error" });
@@ -676,5 +743,40 @@ console.log(req.body)
       success: false,
       error: error.message
     });
+  }
+};
+
+
+//Fetchiing the activity log for each ticket
+export const getWorkLogActivity = async (req, res) => {
+  const { ticketId } = req.body;
+
+  if (!ticketId) {
+    return res.status(400).json({ msg: "Ticket id required" });
+  }
+
+  try {
+    const ticketLogs = await ActivityLog.find({ targetId: ticketId })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const updatedLog = await Promise.all(
+      ticketLogs.map(async (currElem) => {
+        const user = await getUserDetailById(currElem.userId);
+        return {
+          ...currElem,
+          performedBy: user,
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      logs: updatedLog,
+      msg: "Success fetch logs",
+    });
+  } catch (error) {
+    console.error("getWorkLogActivity error:", error);
+    return res.status(500).json({ msg: "Something went wrong" });
   }
 };

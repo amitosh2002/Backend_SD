@@ -13,6 +13,7 @@ router.put("/deactivate/:sprintId", authenticateToken,deactivateSprint);
 router.post("/assignTicketToSprint/:sprintId/sprint", authenticateToken,assignSprintToProjectTicket);
 router.post("/allsprint",authenticateToken,getProjectSprintOverview)
 
+
 // analytics routes 
 
 

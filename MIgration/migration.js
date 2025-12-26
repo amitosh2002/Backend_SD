@@ -3,6 +3,9 @@ import { PartnerModel } from "../models/PlatformModel/partnerModel.js";
 import { TicketModel } from "../models/TicketModels.js";
 import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../models/PlatformModel/UserWorkAccessModel.js";
+import SprintBoardConfigSchema from "../models/PlatformModel/SprintModels/confrigurator/sprintBoardModel.js"
+import ScrumProjectFlow from "../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js"
+import { v4 as uuidv4 } from "uuid";
 
 // Fixed Migration - Method 1: Using updateMany (Recommended)
 export const runMigrationForUpdatePartner = async () => {
@@ -403,6 +406,160 @@ export const runMigrationToAddUserAccess = async () => {
     console.log("MongoDB connection closed.");
   }
 };
+
+/**
+ * ONE-TIME migration
+ * - Creates default Sprint Board if not exists
+ * - Safe to re-run
+ */
+export const addDefaultSprintBoardConfig = async () => {
+  // if (!projectId || !userId) {
+  //   throw new Error("projectId and userId are required");
+  // }
+  // projectId
+  let projectId="SUPPORT"
+  const existingBoard = await SprintBoardConfigSchema.findOne({
+    projectId,
+    isActive: true,
+  });
+
+  if (existingBoard) {
+    console.log("✅ Sprint board already exists. Skipping creation.");
+    return existingBoard;
+  }
+
+  console.log("🚀 Creating default Sprint Board configuration");
+
+  const board = await SprintBoardConfigSchema.create({
+    projectId:"Default",
+    boardName: "Sprint Board",
+    columns: [
+      {
+        columnId: "col_1",
+        name: "To Do",
+        statusKeys: ["OPEN", "IN_PROGRESS"],
+        color: "#3b82f6",
+        wipLimit: null,
+        order: 1,
+      },
+      {
+        columnId: "col_2",
+        name: "In Progress",
+        statusKeys: ["IN_PROGRESS", "IN_REVIEW", "OPEN"],
+        color: "#f59e0b",
+        wipLimit: 5,
+        order: 2,
+      },
+      {
+        columnId: "col_1766149969204",
+        name: "In Review",
+        statusKeys: ["IN_REVIEW", "IN_PROGRESS", "OPEN"],
+        color: "#6366f1",
+        wipLimit: null,
+        order: 3,
+      },
+      {
+        columnId: "col_3",
+        name: "Done",
+        statusKeys: ["CLOSED", "OPEN"],
+        color: "#10b981",
+        wipLimit: null,
+        order: 4,
+      },
+    ],
+    workflowSource: "PROJECT",
+    isActive: true,
+    createdBy: "support",
+    updatedBy: "support",
+  });
+
+  console.log("✅ Default Sprint Board created successfully");
+  return board;
+};
+// // Run the migration directly if you’re executing this file
+// if (process.argv[1] === new URL(import.meta.url).pathname) {
+//   runMigrationToAddUserAccess();
+// }
+
+/**
+ * ONE-TIME migration
+ * - Creates default Sprint Board if not exists
+ * - Safe to re-run
+ */
+export const addDefaultSprintFlowConfig = async () => {
+  // if (!projectId || !userId) {
+  //   throw new Error("projectId and userId are required");
+  // }
+  // projectId
+   console.log("🚀 Checking default Scrum Project Flow...");
+
+  const existingFlow = await ScrumProjectFlow.findOne({
+    flowName: "Default Scrum Flow",
+    sourceType: "TEMPLATE",
+    isActive: true,
+  });
+
+  if (existingFlow) {
+    console.log("✅ Default Scrum Flow already exists. Skipping.");
+    return existingFlow;
+  }
+
+  const flow = await ScrumProjectFlow.create({
+    id: uuidv4(),
+
+    // ✅ IMPORTANT: TEMPLATE flow → projectId MUST be null
+    projectId: 'DEFAULT',
+
+    flowName: "Default Scrum Flow",
+
+    // ✅ Normalized columns (id NOT columnId)
+    columns: [
+      {
+        id: "col_1",
+        name: "To Do",
+        statusKeys: ["OPEN", "IN_PROGRESS"],
+        color: "#3b82f6",
+        wipLimit: null,
+        order: 1,
+      },
+      {
+        id: "col_2",
+        name: "In Progress",
+        statusKeys: ["IN_PROGRESS", "IN_REVIEW", "OPEN"],
+        color: "#f59e0b",
+        wipLimit: 5,
+        order: 2,
+      },
+      {
+        id: "col_3",
+        name: "In Review",
+        statusKeys: ["IN_REVIEW", "IN_PROGRESS", "OPEN"],
+        color: "#6366f1",
+        wipLimit: null,
+        order: 3,
+      },
+      {
+        id: "col_4",
+        name: "Done",
+        statusKeys: ["CLOSED", "OPEN"],
+        color: "#10b981",
+        wipLimit: null,
+        order: 4,
+      },
+    ],
+
+    sourceType: "TEMPLATE",
+    importedFromFlowId: null,
+    isActive: true,
+
+    createdBy: "SYSTEM",
+    updatedBy: "SYSTEM",
+  });
+
+  console.log("✅ Default Scrum Project Flow created successfully");
+  return flow;
+}
+
 
 // // Run the migration directly if you’re executing this file
 // if (process.argv[1] === new URL(import.meta.url).pathname) {
