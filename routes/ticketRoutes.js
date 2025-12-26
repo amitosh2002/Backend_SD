@@ -25,7 +25,7 @@ router.get("/v1/tickets", listTickets);
 router.post("/v1/tickets/create", createTicket);
 router.post("/v2/tickets/create", createTicketV2);
 router.get("/v1/tickets/:id", getTicketById);
-router.patch("/v1/tickets/update/:id", updateTicket);
+router.patch("/v1/tickets/update/:id", authenticateToken, updateTicket);
 router.post("/v1/tickets/time-log", authenticateToken,addTimeLog);
 router.get("/v1/tickets/by-key/:key", getTicketByKey);
 router.get("/v1/tickets/preview-key", previewTicketKey);

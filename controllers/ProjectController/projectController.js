@@ -11,7 +11,7 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import User from "../../models/UserModel.js";
 import { sendInvitationEmail } from "../../services/emailService.js";
-import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow } from "../../utility/platformUtility.js";
+import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getUserDetailById } from "../../utility/platformUtility.js";
 import { TicketModel } from "../../models/TicketModels.js";
 
 // import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
@@ -825,17 +825,42 @@ export const getUserAnalyticsAgg = async (req, res) => {
   {
     $lookup: {
       from: "projects",
-      localField: "projectId",
-      foreignField: "projectId",
+      let: { ticketProjectId: "$projectId" },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $or: [
+                { $eq: ["$projectId", "$$ticketProjectId"] },
+                { $eq: [{ $toString: "$projectId" }, { $toString: "$$ticketProjectId" }] },
+                 { $eq: [{ $toString: "$_id" }, { $toString: "$$ticketProjectId" }] }
+              ]
+            }
+          }
+        }
+      ],
       as: "project"
     }
   },
 
   {
+
     $lookup: {
       from: "partnersprints",
-      localField: "sprintId",
-      foreignField: "sprintId",
+      let: { ticketSprintId: "$sprint" },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $or: [
+                { $eq: ["$id", "$$ticketSprintId"] },
+                { $eq: [{ $toString: "$id" }, { $toString: "$$ticketSprintId" }] },
+                 { $eq: [{ $toString: "$_id" }, { $toString: "$$ticketSprintId" }] }
+              ]
+            }
+          }
+        }
+      ],
       as: "sprint"
     }
   },
@@ -844,27 +869,82 @@ export const getUserAnalyticsAgg = async (req, res) => {
   { $unwind: { path: "$sprint", preserveNullAndEmptyArrays: true } },
 
   {
+
+    $project: {
+      _id: 1,
+      title: 1,
+      ticketKey: 1,
+      status: 1,
+      priority: 1,
+      storyPoints: "$storyPoint",
+      totalTimeLogged: 1,
+      projectId: 1,
+      sprintId: 1, // Keep original ID if needed, or mapped one
+      projectName: { $ifNull: ["$project.projectName", "$project.name"] },
+      sprintName: "$sprint.sprintName",
+      timeLogs: "$filteredTimeLogs", // Only return filtered logs or all? Keeping filtered for now as per logic
+      // If we want all logs, we should use $timeLogs. But visually filtering usually implies showing relevant logs.
+      // However, the UI calculates total time from these logs.
+      createdAt: 1,
+      updatedAt: 1
+    }
+  },
+
+  {
     $group: {
       _id: {
         projectId: "$projectId",
         sprintId: "$sprintId"
       },
-      projectName: { $first: "$project.name" },
-      sprintName: { $first: "$sprint.name" },
-      totalTime: { $sum: "$totalTimeLogged" },
-      totalStoryPoints: {
-        $sum: {
-          $cond: [
-            { $eq: ["$status", "Done"] },
-            { $ifNull: ["$storyPoints", 0] },
-            0
-          ]
+      projectName: { $first: "$projectName" },
+      sprintName: { $first: "$sprintName" },
+      // Collect tickets in this sprint
+      tickets: {
+        $push: {
+          _id: "$_id",
+          title: "$title",
+          ticketKey: "$ticketKey",
+          status: "$status",
+          priority: "$priority",
+          storyPoints: "$storyPoints",
+          assignee: "$assignee",
+          totalTimeAdded:"$timeLogs",
+          totalTimeLogged: "$totalTimeLogged",
+          createdAt: "$createdAt",
+          updatedAt: "$updatedAt"
         }
+      },
+      totalTimeSprint: { $sum: "$totalTimeLogged" },
+      totalStoryPointsSprint: {
+         $sum: {
+           $cond: [
+             { $eq: ["$status", "Done"] },
+             { $ifNull: ["$storyPoints", 0] },
+             0
+           ]
+         }
       }
     }
   },
-
-  { $sort: { totalTime: -1 } }
+  
+  {
+    $group: {
+      _id: "$_id.projectId",
+      projectName: { $first: "$projectName" },
+      sprints: {
+        $push: {
+          sprintId: "$_id.sprintId",
+          sprintName: "$sprintName",
+          totalTime: "$totalTimeSprint",
+          totalStoryPoints: "$totalStoryPointsSprint",
+          tickets: "$tickets"
+        }
+      },
+       totalTimeProject: { $sum: "$totalTimeSprint" }
+    }
+  },
+  
+  { $sort: { totalTimeProject: -1 } }
 ];
 
     const data = await TicketModel.aggregate(pipeline);

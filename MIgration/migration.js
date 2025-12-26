@@ -5,6 +5,7 @@ import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../models/PlatformModel/UserWorkAccessModel.js";
 import SprintBoardConfigSchema from "../models/PlatformModel/SprintModels/confrigurator/sprintBoardModel.js"
 import ScrumProjectFlow from "../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js"
+import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js";
 import { v4 as uuidv4 } from "uuid";
 
 // Fixed Migration - Method 1: Using updateMany (Recommended)
@@ -560,8 +561,142 @@ export const addDefaultSprintFlowConfig = async () => {
   return flow;
 }
 
+/**
+ * Migration to assign sprints to tickets that don't have a sprint
+ * - Finds tickets with null/empty sprint field
+ * - Groups by projectId
+ * - For each project, finds the active sprint (or most recent sprint)
+ * - Updates tickets to use that sprint's id
+ */
+export const runMigrationToAssignSprintsToTickets = async () => {
+  try {
+    console.log("🚀 Starting migration to assign sprints to tickets...");
 
-// // Run the migration directly if you’re executing this file
+    // Find all tickets where sprint is null or empty
+    const ticketsWithoutSprint = await TicketModel.find({
+      $or: [
+        { sprint: null },
+        { sprint: "" },
+        { sprint: { $exists: false } }
+      ]
+    }).select('_id projectId partnerId').lean();
+
+    console.log(`Found ${ticketsWithoutSprint.length} tickets without sprint`);
+
+    if (ticketsWithoutSprint.length === 0) {
+      console.log("✅ No tickets need sprint assignment. Migration complete.");
+      return {
+        success: true,
+        message: "No tickets needed sprint assignment",
+        updatedCount: 0
+      };
+    }
+
+    // Group tickets by projectId
+    const ticketsByProject = {};
+    for (const ticket of ticketsWithoutSprint) {
+      if (!ticket.projectId) {
+        console.log(`⚠️  Skipping ticket ${ticket._id} - no projectId`);
+        continue;
+      }
+      if (!ticketsByProject[ticket.projectId]) {
+        ticketsByProject[ticket.projectId] = [];
+      }
+      ticketsByProject[ticket.projectId].push(ticket);
+    }
+
+    console.log(`Processing ${Object.keys(ticketsByProject).length} projects`);
+
+    let totalUpdated = 0;
+    let totalSkipped = 0;
+    const results = [];
+
+    // Process each project
+    for (const [projectId, tickets] of Object.entries(ticketsByProject)) {
+      try {
+        console.log(`\n📦 Processing project: ${projectId} (${tickets.length} tickets)`);
+
+        // Find active sprint for this project (preferred)
+        let sprint = await partnerSprint.findOne({
+          projectId: projectId,
+          isActive: true,
+          status: { $in: ['PLANNED', 'ACTIVE'] }
+        }).sort({ startDate: -1 }).lean();
+
+        // If no active sprint, find the most recent sprint
+        if (!sprint) {
+          sprint = await partnerSprint.findOne({
+            projectId: projectId
+          }).sort({ startDate: -1 }).lean();
+        }
+
+        if (!sprint) {
+          console.log(`⚠️  No sprint found for project ${projectId}. Skipping ${tickets.length} tickets.`);
+          totalSkipped += tickets.length;
+          results.push({
+            projectId,
+            sprintId: null,
+            sprintName: null,
+            ticketsCount: tickets.length,
+            status: 'no_sprint_found'
+          });
+          continue;
+        }
+
+        console.log(`✅ Found sprint: ${sprint.sprintName} (${sprint.id})`);
+
+        // Update all tickets for this project
+        const ticketIds = tickets.map(t => t._id);
+        const updateResult = await TicketModel.updateMany(
+          { _id: { $in: ticketIds } },
+          { $set: { sprint: sprint.id } }
+        );
+
+        console.log(`   Updated ${updateResult.modifiedCount} tickets`);
+        totalUpdated += updateResult.modifiedCount;
+
+        results.push({
+          projectId,
+          sprintId: sprint.id,
+          sprintName: sprint.sprintName,
+          ticketsCount: tickets.length,
+          updatedCount: updateResult.modifiedCount,
+          status: 'success'
+        });
+
+      } catch (error) {
+        console.error(`❌ Error processing project ${projectId}:`, error);
+        results.push({
+          projectId,
+          ticketsCount: tickets.length,
+          status: 'error',
+          error: error.message
+        });
+      }
+    }
+
+    console.log("\n📊 Migration Summary:");
+    console.log(`   Total tickets processed: ${ticketsWithoutSprint.length}`);
+    console.log(`   Tickets updated: ${totalUpdated}`);
+    console.log(`   Tickets skipped (no sprint): ${totalSkipped}`);
+    console.log(`   Projects processed: ${Object.keys(ticketsByProject).length}`);
+
+    return {
+      success: true,
+      totalTickets: ticketsWithoutSprint.length,
+      updatedCount: totalUpdated,
+      skippedCount: totalSkipped,
+      projectsProcessed: Object.keys(ticketsByProject).length,
+      results
+    };
+
+  } catch (error) {
+    console.error("❌ Migration failed:", error);
+    throw error;
+  }
+};
+
+// // Run the migration directly if you're executing this file
 // if (process.argv[1] === new URL(import.meta.url).pathname) {
 //   runMigrationToAddUserAccess();
 // }
