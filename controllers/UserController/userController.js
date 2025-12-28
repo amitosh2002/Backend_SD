@@ -1,3 +1,5 @@
+import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
+import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import { TicketModel } from "../../models/TicketModels.js";
 import User from "../../models/UserModel.js";
 import { analyzeCurrentWeekAndMonthLogs } from "../../utility/platformUtility.js";
@@ -131,5 +133,65 @@ export const getUserTimeLog = async (req, res) => {
     } catch (error) {
         console.error("Error fetching user time log:", error);
         return res.status(500).json({ msg: "Internal server error", error: error.message });
+    }
+};
+export const getUserTeamDetails = async (req, res) => {
+    try {
+        console.log("getUserTeamDetails called, req.user:", req.user);
+        if (!req.user) {
+            return res.status(401).json({ success: false, message: "Authentication required" });
+        }
+        const userId = req.user.userId;
+
+        // 1. Projects this user belongs to
+        const userProjectIds = await UserWorkAccess
+            .find({ userId })
+            .distinct('projectId');
+
+        if (!userProjectIds.length) {
+            return res.status(200).json({ success: true, data: [] });
+        }
+
+        // 2. Actual projects
+        const projects = await ProjectModel.find({
+            projectId: { $in: userProjectIds }
+        }).select('projectId projectName status');
+
+        // 3. All accepted members for those projects (NO accessType filter)
+        const teamAccess = await UserWorkAccess.find({
+            projectId: { $in: userProjectIds },
+            status: "accepted"
+        }).populate('userId', 'username email profile');
+
+        // 4. Attach members to projects
+        const result = projects.map(project => {
+            const members = teamAccess
+                .filter(access =>
+                    access.projectId.toString() === project.projectId.toString()
+                )
+                .map(access => access.userId)
+                .filter((user, index, self) =>
+                    user &&
+                    self.findIndex(u => u._id.toString() === user._id.toString()) === index
+                );
+
+            return {
+                projectId: project.projectId,
+                projectName: project.projectName,
+                status: project.status,
+                members
+            };
+        });
+
+        res.status(200).json({
+            success: true,
+            data: result
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
     }
 };

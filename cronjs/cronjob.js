@@ -55,6 +55,6 @@ function hitBackend() {
 // });
 cron.schedule("0 * * * *", () => {
   console.log(`[${getTimestamp()}] 🔄 Running cron job to hit backend...`);
-  hitBackend();
+  // hitBackend();
 });
 

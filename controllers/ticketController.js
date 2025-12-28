@@ -3,6 +3,10 @@ import User from "../models/UserModel.js";
 import   {UserWorkAccess} from "../models/PlatformModel/UserWorkAccessModel.js";
 import mongoose from "mongoose";
 import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
+import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js";
+import ActivityLog from "../models/PlatformModel/ActivityLogModel.js";
+import { LogActionType, LogEntityType } from "../models/PlatformModel/Enums/ActivityLogEnum.js";
+import { getUserDetailById } from "../utility/platformUtility.js";
 
 export const createTicket = async (req, res) => {
   try {
@@ -48,8 +52,9 @@ export const createTicket = async (req, res) => {
 export const createTicketV2 = async (req, res) => {
   try {
     const ticketData = req.body;
-    console.log(ticketData)
-    const userId = req.body.userId || (req.user && req.user.userId);
+    const userId =  req.user.userId || req.body.userId;
+    
+    // const userId = req.body.userId || (req.user && req.user.userId);
     if (!userId) return res.status(401).json({ message: 'Missing userId or unauthenticated' });
     const user = await User.findById(userId);
     if (!user) {
@@ -102,11 +107,27 @@ export const createTicketV2 = async (req, res) => {
 
     await ticket.save();
 
+
+    // adding logs for ticket creation 
+
+    // await ActivityLog.create(
+    //   {
+    //     userId:userId,
+    //     projectId:ticket.projectId,
+    //     actionType:LogActionType.TICKET_CREATE,
+    //     targetType:LogEntityType.TASK,
+    //     targetId:ticket.id ?? ticket._id,
+    //     changes:[{
+    //       newValue:ticket.ticketKey,
+    //     }],
+    //   }
+    // )
+
     return res.status(201).json({
       success: true,
       message: "Ticket created successfully",
       data: {
-  id: ticket._id,
+        id: ticket._id,
         ticketKey: ticket.ticketKey,
         title: ticket.title,
         type: ticket?.type,
@@ -260,14 +281,34 @@ export const listTickets = async (req, res) => {
 
     // Step 4: Query tickets
     const [items, total] = await Promise.all([
-      TicketModel.find(filters)
-        .sort({ createdAt: -1 })
-        .skip((numericPage - 1) * numericLimit)
-        .limit(numericLimit)
-        .lean(),
-      TicketModel.countDocuments(filters),
-    ]);
-    
+            TicketModel.find(filters)
+              .sort({ createdAt: -1 })
+              .skip((numericPage - 1) * numericLimit)
+              .limit(numericLimit)
+              .lean(),
+            TicketModel.countDocuments(filters),
+          ]);
+
+          const sprintIds = items
+            .map(ticket => ticket.sprint)
+            .filter(Boolean);
+            console.log(sprintIds)
+
+          if (sprintIds.length) {
+            const sprints = await partnerSprint
+              .find({ id: { $in: sprintIds } })
+              .lean();
+            console.log(sprints)
+            const sprintMap = {};
+            sprints.forEach(sprint => {
+              sprintMap[sprint.id] = sprint;
+            });
+
+            items.forEach(ticket => {
+              ticket.sprint = sprintMap[ticket.sprint]?.sprintName || "";
+            });
+          }
+
     // Step 5: Return response
     return res.status(200).json({
       page: numericPage,
@@ -307,6 +348,19 @@ export const updateTicket = async (req, res) => {
       new: true,
       runValidators: true,
     });
+
+        await ActivityLog.create(
+      {
+        userId:req.user.userId,
+        projectId:updated.projectId,
+        actionType:LogActionType.TICKET_UPDATE,
+        targetType:LogEntityType.TASK,
+        targetId:id,
+        changes:[{
+          newValue:update,
+        }],
+      }
+    )
     if (!updated) return res.status(404).json({ message: "Ticket not found" });
     return res.status(200).json(updated);
   } catch (err) {
@@ -364,6 +418,19 @@ export const addTimeLog = async (req, res) => {
       { new: true, runValidators: true }
     );
 
+    // ====================== logs for timelog===============/
+       await ActivityLog.create(
+      {
+        userId:req.user.userId,
+        projectId:updatedTicket.projectId,
+        actionType:LogActionType.ADD_TIME_LOG,
+        targetType:LogEntityType.TASK,
+        targetId:ticketId,
+        changes:[{
+          newValue:durationMinutes,
+        }],
+      })
+
     // 3. Handle Not Found
     if (!updatedTicket) {
       return res.status(404).json({ message: `Ticket with ID ${ticketId} not found.` });
@@ -382,13 +449,35 @@ export const setStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    const updated = await TicketModel.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true, runValidators: true }
-    );
-    if (!updated) return res.status(404).json({ message: "Ticket not found" });
-    return res.status(200).json(updated);
+    // const updated = await TicketModel.findByIdAndUpdate(
+    //   id,
+    //   { status },
+    //   { new: true, runValidators: true }
+    // );
+
+    const ticket = await TicketModel.findById(id);
+
+    const prevStatus = ticket.status;
+ 
+    ticket.status = status;
+    await ticket.save();
+
+      await ActivityLog.create({
+        userId: req.user.userId,
+        projectId: ticket.projectId,
+        actionType: LogActionType.TICKET_TRANSITION,
+        targetType: LogEntityType.TASK,
+        targetId: ticket._id,
+        changes: 
+          {
+            field: 'status',
+            prevValue: prevStatus,
+            newValue: status,
+          },
+        
+      });
+    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+    return res.status(200).json({msg:"ticket status updated"});
   } catch (err) {
     console.error("Error setting status:", err);
     return res.status(500).json({ message: "Internal server error" });
@@ -523,7 +612,8 @@ export const previewTicketKey = async (req, res) => {
  * @param {object} res - Express response object
  */
 export const getTicketByQuery = async (req, res) => {
-    // 1. Destructure and Clean 
+    // 1. Destructure and Clean '
+    console.log(req.user.userId)
     const { query } = req.query;
     console.log(req.query,"search query")
     // const { q, partnerId, projectId } = req.query;
@@ -568,6 +658,10 @@ export const getTicketByQuery = async (req, res) => {
 
         // 3. Execute the Query
         // Add a .limit() and .skip() for pagination in a production environment
+
+        const userWorkAccess = await UserWorkAccess.find({ userId: req.user.userId });
+        const projectIds = userWorkAccess.map(userWorkAccess => userWorkAccess.projectId);
+        mongoQuery.projectId = { $in: projectIds };
         const tickets = await TicketModel.find(mongoQuery)
             .select('ticketKey title status priority partnerId projectId') // Select only essential fields
             .limit(50) // Prevent fetching too many documents on a broad query
@@ -654,5 +748,40 @@ console.log(req.body)
       success: false,
       error: error.message
     });
+  }
+};
+
+
+//Fetchiing the activity log for each ticket
+export const getWorkLogActivity = async (req, res) => {
+  const { ticketId } = req.body;
+
+  if (!ticketId) {
+    return res.status(400).json({ msg: "Ticket id required" });
+  }
+
+  try {
+    const ticketLogs = await ActivityLog.find({ targetId: ticketId })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const updatedLog = await Promise.all(
+      ticketLogs.map(async (currElem) => {
+        const user = await getUserDetailById(currElem.userId);
+        return {
+          ...currElem,
+          performedBy: user,
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      logs: updatedLog,
+      msg: "Success fetch logs",
+    });
+  } catch (error) {
+    console.error("getWorkLogActivity error:", error);
+    return res.status(500).json({ msg: "Something went wrong" });
   }
 };
