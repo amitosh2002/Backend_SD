@@ -657,6 +657,10 @@ export const getTicketByQuery = async (req, res) => {
 
         // 3. Execute the Query
         // Add a .limit() and .skip() for pagination in a production environment
+
+        const userWorkAccess = await UserWorkAccess.find({ userId: req.user.userId });
+        const projectIds = userWorkAccess.map(userWorkAccess => userWorkAccess.projectId);
+        mongoQuery.projectId = { $in: projectIds };
         const tickets = await TicketModel.find(mongoQuery)
             .select('ticketKey title status priority partnerId projectId') // Select only essential fields
             .limit(50) // Prevent fetching too many documents on a broad query

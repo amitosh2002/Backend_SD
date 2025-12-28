@@ -108,6 +108,10 @@ app.use("/api/sprint", sprintRoutes);
 // Sprint board configurator routes (protected)
 app.use("/api/sprint/configurator", authenticateToken, configuratorRoute);
 
+
+// user routes
+app.use("/api/platform", userRoutes);
+
 app.get("/server", (req, res) => {
   res.send("Hello World!");
   
