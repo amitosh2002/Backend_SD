@@ -34,6 +34,11 @@ const Projects = new mongoose.Schema({
     type: Object,
     required: true,
   },
+  isArchived: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
   startDate: {
     type: Date,
     // required: true,
