@@ -23,7 +23,7 @@ const router = express.Router();
 
 router.get("/v1/tickets", listTickets);
 router.post("/v1/tickets/create", createTicket);
-router.post("/v2/tickets/create", createTicketV2);
+router.post("/v2/tickets/create",authenticateToken,createTicketV2);
 router.get("/v1/tickets/:id", getTicketById);
 router.patch("/v1/tickets/update/:id", authenticateToken, updateTicket);
 router.post("/v1/tickets/time-log", authenticateToken,addTimeLog);
