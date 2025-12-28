@@ -52,8 +52,9 @@ export const createTicket = async (req, res) => {
 export const createTicketV2 = async (req, res) => {
   try {
     const ticketData = req.body;
-    console.log(ticketData)
-    const userId = req.body.userId || (req.user && req.user.userId);
+    const userId =  req.user.userId || req.body.userId;
+    
+    // const userId = req.body.userId || (req.user && req.user.userId);
     if (!userId) return res.status(401).json({ message: 'Missing userId or unauthenticated' });
     const user = await User.findById(userId);
     if (!user) {
@@ -109,18 +110,18 @@ export const createTicketV2 = async (req, res) => {
 
     // adding logs for ticket creation 
 
-    await ActivityLog.create(
-      {
-        userId:req.user.userId,
-        projectId:ticket.projectId,
-        actionType:LogActionType.TICKET_CREATE,
-        targetType:LogEntityType.TASK,
-        targetId:ticket.id ?? ticket._id,
-        changes:[{
-          newValue:ticket.ticketKey,
-        }],
-      }
-    )
+    // await ActivityLog.create(
+    //   {
+    //     userId:userId,
+    //     projectId:ticket.projectId,
+    //     actionType:LogActionType.TICKET_CREATE,
+    //     targetType:LogEntityType.TASK,
+    //     targetId:ticket.id ?? ticket._id,
+    //     changes:[{
+    //       newValue:ticket.ticketKey,
+    //     }],
+    //   }
+    // )
 
     return res.status(201).json({
       success: true,
