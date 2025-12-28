@@ -202,6 +202,16 @@ const TicketSchema = new mongoose.Schema(
       required: false,
       min: [0, "Estimated hours cannot be negative"],
     },
+    eta: {
+      type: Date,
+      required: false,
+    },
+    sprint: {
+      type: String,
+      required: false,
+      ref:"PartnerSprint",
+      default:null
+    },
   },
   {
     timestamps: true,
