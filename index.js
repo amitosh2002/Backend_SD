@@ -30,26 +30,45 @@ const port = process.env.PORT || 8000;
 app.use(express.json());
 
 // cors
+
+
 const allowedOrigins = [
   "http://localhost:5173",
   "https://sd-tracking.onrender.com",
 ];
+
 app.use(
   cors({
     origin: (origin, callback) => {
+      // Allow requests with no origin (like Postman) or those in allowedOrigins
       if (!origin || allowedOrigins.includes(origin)) {
-        return callback(null, true);
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
       }
-      return callback(new Error("Not allowed by CORS"));
     },
-     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        // 💡 ADDITION: Allow common headers needed for authentication and content type
-    allowedHeaders: ['Content-Type', 'Authorization', 'authorization','X-Custom-Token'], 
-    
-    // Allow credentials (cookies/auth headers) to be sent
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "authorization",
+      "X-Custom-Token",
+    ],
     credentials: true,
+    preflightContinue: false, // Pass OPTIONS requests to next handler
+    optionsSuccessStatus: 204, // Return 204 for successful OPTIONS requests
   })
 );
+
+// Optional: handle CORS errors globally
+app.use((err, req, res, next) => {
+  if (err instanceof Error && err.message === "Not allowed by CORS") {
+    res.status(403).json({ message: err.message });
+  } else {
+    next(err);
+  }
+});
+
 
 //Db connection
 console.log("Connecting to MongoDB with URI:", dbConfig.url);
