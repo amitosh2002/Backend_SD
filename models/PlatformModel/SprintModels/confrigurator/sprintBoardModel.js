@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { v4 as uuidv4 } from "uuid";
+
 const ColumnSchema = new mongoose.Schema(
   {
     columnId: { type: String, required: true },
@@ -12,17 +13,13 @@ const ColumnSchema = new mongoose.Schema(
   { _id: false }
 );
 
-const WorkFlowSourceENUM=["PROJECT", "IMPORTED", "TEMPLATE"];
-
 const SprintBoardConfigSchema = new mongoose.Schema(
   {
-
-    id:{
-         type: String,            
-          required: true,
-          unique: true,
-          // default: () => uuid(),  // ✅ Auto-generate UUID
-          default: () => uuidv4(),
+    id: {
+      type: String,
+      required: true,
+      unique: true,
+      default: () => uuidv4(),
     },
     projectId: {
       type: String,
@@ -30,40 +27,59 @@ const SprintBoardConfigSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-
     boardName: {
       type: String,
       default: "Sprint Board",
     },
-
     columns: {
       type: [ColumnSchema],
       default: [],
     },
-
+    // New fields for board-specific flow
+    statuses: {
+      type: [
+        {
+          key: { type: String, required: true },
+          label: { type: String, required: true },
+          description: { type: String, default: "" },
+          color: {
+            bg: { type: String, default: "#dbeafe" },
+            text: { type: String, default: "#1e40af" },
+            border: { type: String, default: "#3b82f6" },
+          },
+          isTerminal: { type: Boolean, default: false },
+        },
+      ],
+      default: [],
+    },
+    transitions: {
+      type: [
+        {
+          from: { type: String, required: true },
+          to: { type: String, required: true },
+        },
+      ],
+      default: [],
+    },
     workflowSource: {
       type: String,
-      enum:WorkFlowSourceENUM ,
+      enum: ["PROJECT", "IMPORTED", "TEMPLATE"],
       default: "PROJECT",
     },
-
     importedFromProjectId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Projects",
       default: null,
     },
-
     isActive: {
       type: Boolean,
       default: true,
     },
-
     createdBy: {
       type: String,
       ref: "User",
       required: true,
     },
-
     updatedBy: {
       type: String,
       ref: "User",
@@ -73,6 +89,4 @@ const SprintBoardConfigSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// export default mongoose.model("SprintBoardConfig", SprintBoardConfigSchema);
 export default mongoose.model("SprintBoardConfig", SprintBoardConfigSchema);
-
