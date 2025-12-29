@@ -1,4 +1,4 @@
-import { transporter } from "../config/emailConfig.js";
+import { transporter, resendTransporter } from "../config/emailConfig.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -39,19 +39,48 @@ const getStatusColor = (status) => {
 // Send a simple email
 const sendEmail = async (to, subject, text, html) => {
   try {
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: to,
-      subject: subject,
-      text: text,
-      html: html,
-    };
+    const region = process.env.SMTP_REGION || "NOT_SET";
+    console.log(`[sendEmail] Starting email send process. Region: ${region}, To: ${to}`);
 
-    const result = await transporter.sendMail(mailOptions);
-    console.log("Email sent successfully:", result.messageId);
-    return { success: true, messageId: result.messageId };
+    if (process.env.SMTP_REGION === "PROD") {
+      const fromEmail = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+      const fromName = "Hora";
+      const formattedFrom = fromEmail.includes("<") ? fromEmail : `${fromName} <${fromEmail}>`;
+
+      console.log(`[PROD] Attempting to send via Resend SMTP from: ${formattedFrom}`);
+
+      const mailOptions = {
+        from: formattedFrom,
+        to: to,
+        subject: subject,
+        text: text,
+        html: html,
+      };
+
+      const result = await resendTransporter.sendMail(mailOptions);
+      console.log("[PROD] Email sent successfully via Resend SMTP:", result.messageId);
+      return { success: true, messageId: result.messageId };
+    } else {
+      // Use Nodemailer (Gmail) for STAGE or default
+      const mode = process.env.SMTP_REGION === "STAGE" ? "STAGE" : "DEFAULT/LOCAL";
+      console.log(`[${mode}] Attempting to send via Nodemailer (Gmail)...`);
+      console.log(`[${mode}] Using EMAIL_USER: ${process.env.EMAIL_USER}`);
+
+      const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: to,
+        subject: subject,
+        text: text,
+        html: html,
+      };
+
+      console.log(`[${mode}] Calling transporter.sendMail...`);
+      const result = await transporter.sendMail(mailOptions);
+      console.log(`[${mode}] Email sent successfully via Nodemailer (Gmail):`, result.messageId);
+      return { success: true, messageId: result.messageId };
+    }
   } catch (error) {
-    console.error("Error sending email:", error);
+    console.error("[sendEmail] CRITICAL ERROR:", error);
     return { success: false, error: error.message };
   }
 };
@@ -388,27 +417,27 @@ const sendBulkEmails = async (recipients, subject, text, html) => {
 };
 
   const   sendInvitationEmail=async(templateData)=>{
-    // console.log("gff",invitaitonLink,projectName,partnerName,role,"2")
     try{
-         
-      
-    
-    console.log("templateData in sendInvitationEmail:", templateData);
+    console.log("[sendInvitationEmail] Starting with templateData:", JSON.stringify(templateData, null, 2));
     
     // Compile the template and verify the output
     const html = compileTemplate("invitationTemplate", templateData);
-    console.log("Compiled HTML template preview (first 200 chars):", html.substring(0, 200));
-       const subject=`Invitation to join ${templateData.partnerName} on Hora`;
+    console.log("[sendInvitationEmail] Template compiled. Preview:", html.substring(0, 100));
+    const subject=`Invitation to join ${templateData.partnerName} on Hora`;
 
       if(!templateData){
        throw new Error("Invalid template data for invitation email");
       }
       // Send both a plain text version and HTML version
-      const plainText =templateData.invitaitonLink;
-      return await sendEmail(templateData.to, subject, plainText, html);
+      const plainText = templateData.invitationLink;
+      console.log("[sendInvitationEmail] Calling sendEmail to:", templateData.to);
+      const result = await sendEmail(templateData.to, subject, plainText, html);
+      console.log("[sendInvitationEmail] sendEmail result:", result);
+      return result;
       
     }catch(error){
-      console.error("Error in sendInvitationEmail controller:", error);
+      console.error("[sendInvitationEmail] ERROR:", error);
+      return { success: false, error: error.message };
     }
   }
 // Export all functions as named exports
