@@ -365,8 +365,15 @@ export const getProjectSprintOverview = async (req, res) => {
         });
       }
 
-      projectIds = accesses.map(a => a.projectId.toString());
+      projectIds = [...new Set(accesses.map(a => a.projectId?.toString().trim()).filter(id => !!id))];
     }
+
+    // NEW: Cross-verify with ProjectModel to remove orphaned IDs
+    const validProjects = await ProjectModel.find({ projectId: { $in: projectIds } }).select('projectId projectName name').lean();
+    const projectMap = new Map(validProjects.map(p => [p.projectId, p.projectName || p.name || "Unknown Project"]));
+    
+    // Update projectIds to only include those that actually exist
+    projectIds = validProjects.map(p => p.projectId);
 
     const allProjectSprints = [];
 
@@ -388,39 +395,58 @@ export const getProjectSprintOverview = async (req, res) => {
 
       const sprintData = [];
 
-      // Fetch analytics for each sprint
+      // NEW: Get project name from our validated map
+      const pName = projectMap.get(pid) || "Unknown Project";
+
+      // Fetch analytics and tickets for each sprint
       for (const sprint of sprints) {
         try {
           const analytics = await getAppSprintAnalytics(sprint.id);
 
+          // NEW: Fetch tickets for this sprint that have an ETA
+          const ticketsWithEta = await TicketModel.find({
+            sprint: sprint.id,
+            eta: { $exists: true, $ne: null }
+          }).select('title eta status ticketKey type').lean();
+
           sprintData.push({
             sprintId: sprint.id,
             sprintName: sprint.sprintName,
+            projectName: pName, // Include project name
             sprintNumber: sprint.sprintNumber,
             startDate: sprint.startDate,
             endDate: sprint.endDate,
             status: sprint.status,
             isActive: sprint.isActive,
             analytics,
+            tickets: ticketsWithEta // Include relevant tickets
           });
         } catch (err) {
-          console.error(`Failed to get analytics for sprint ${sprint.id}:`, err.message);
-          // Still push sprint details without analytics if helper fails
+          console.error(`Failed to get data for sprint ${sprint.id}:`, err.message);
+          
+          const ticketsWithEta = await TicketModel.find({
+            sprint: sprint.id,
+            eta: { $exists: true, $ne: null }
+          }).select('title eta status ticketKey type').lean();
+
           sprintData.push({
             sprintId: sprint.id,
             sprintName: sprint.sprintName,
+            projectName: pName, // Include project name
             sprintNumber: sprint.sprintNumber,
             startDate: sprint.startDate,
             endDate: sprint.endDate,
             status: sprint.status,
             isActive: sprint.isActive,
             analytics: null,
+            tickets: ticketsWithEta
           });
         }
       }
 
       allProjectSprints.push({
         projectId: pid,
+        projectName: pName,
         sprints: sprintData,
       });
     }
