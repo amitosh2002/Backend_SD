@@ -3,7 +3,7 @@ import SprintBoardConfigSchema from "../../models/PlatformModel/SprintModels/con
 import ScrumProjectFlow from "../../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import { buildDropdownConfigFromFlow } from "../../utility/platformUtility.js";
-// import SprintBoardConfigSchema from "../../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js"
+
 export const createBoardConfig = async (req, res) => {
   try {
     const { projectId, boardName, columns } = req.body;
@@ -506,5 +506,56 @@ export const UpdateSprintFlowForProject = async (req, res) => {
   } catch (error) {
     console.error("UpdateSprintFlow Error:", error);
     return res.status(500).json({ msg: "Internal Server Error", error: error.message });
+  }
+};
+
+/**
+ * Save or update project board
+ */
+export const saveOrUpdateProjectBoard = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { columns,projectId } = req.body; // columns from frontend
+
+    if (!columns || !Array.isArray(columns)) {
+      return res.status(400).json({ message: 'Invalid columns payload' });
+    }
+
+    // Normalize columns: ensure columnId, statusKeys, colors, order
+    const normalizedColumns = columns.map((col, i) => ({
+      columnId: col.columnId || `col_${Date.now()}_${i}`, // fallback if no ID
+      name: col.name,
+      description: col.description || '',
+      statusKeys: Array.isArray(col.statusKeys)
+        ? Array.from(new Set(col.statusKeys)) // deduplicate
+        : [],
+      color: col.color || '#6366f1',
+      wipLimit: col.wipLimit ?? null,
+      order: col.order ?? i
+    }));
+
+    // Upsert board for this project
+ const updatedBoard = await SprintBoardConfigSchema.updateOne(
+  { projectId: projectId }, // find by actual projectId
+  {
+    $set: { columns: normalizedColumns, updatedAt: new Date() },
+    $setOnInsert: {
+      projectId: projectId,
+      createdBy: userId,
+      createdAt: new Date(),
+    },
+  },
+  { upsert: true }
+);
+
+
+    return res.status(200).json({
+      message: 'Board saved successfully',
+      data: updatedBoard
+    });
+
+  } catch (error) {
+    console.error('Error saving board:', error);
+    return res.status(500).json({ message: 'Server error', error });
   }
 };
