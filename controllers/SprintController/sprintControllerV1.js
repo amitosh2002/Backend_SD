@@ -1,5 +1,6 @@
 // import PartnerSprint from "../models/partnerSprint.model.js";
 
+import ActivityLog from "../../models/PlatformModel/ActivityLogModel.js";
 import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import partnerSprint from "../../models/PlatformModel/SprintModels/partnerSprint.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
@@ -325,6 +326,18 @@ export const assignSprintToProjectTicket = async (req, res) => {
 
     await TicketModel.findByIdAndUpdate(ticketId, { sprint: sprint.id });
 
+   await ActivityLog.create(
+      {
+        userId:req.user.userId,
+        projectId:project.projectId,
+        actionType:LogActionType.SPRINT_UPDATE,
+        targetType:LogEntityType.SPRINT,
+        targetId:updatedTicket.id ?? project._id,
+        changes:{
+          newValue:sprint.sprintName,
+        },
+      }
+    )
     // sprint.projectId = projectId;
     // await sprint.save();
     return res.status(200).json({ success: true, message: `Ticket moved to ${sprint?.sprintName || 'Backlog'}` });
