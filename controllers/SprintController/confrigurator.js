@@ -240,7 +240,7 @@ export const importFlowFor = async (req, res) => {
   }
 };
 
-// ======================================scrum confrigurtor =====
+// ======================================scrum confrigurtor  fixed and running =====
 
 export const getScrumFlowForProject = async (req, res) => {
   try {
@@ -254,7 +254,6 @@ export const getScrumFlowForProject = async (req, res) => {
       isActive: true,
       sourceType: "PROJECT",
     }).lean();
-    console.log(flow,"find response")
     // 2️⃣ Fallback to TEMPLATE
     if (!flow) {
       console.log("[ScrumFlow] Using TEMPLATE flow");
@@ -263,7 +262,6 @@ export const getScrumFlowForProject = async (req, res) => {
         isActive: true,
         sourceType: "TEMPLATE",
       }).lean();
-    console.log(flow,"find response def")
 
     }
 
@@ -287,40 +285,74 @@ export const getScrumFlowForProject = async (req, res) => {
       return res.status(404).json({ message: "No statuses found in flow" });
     }
 
-    const columns = derivedStatuses.map((status, index) => ({
-      columnId: `flow_col_${index + 1}`,
-      name: (status || '').toString().replaceAll("_", " "),
-      statusKeys: [status],
-      color: (flow.statusColors && flow.statusColors[status]) || flow.columns?.[index]?.color || "#6366f1",
+    // const columns = derivedStatuses.map((status, index) => ({
+    //   columnId: `flow_col_${index + 1}`,
+    //   name: (status || '').toString().replaceAll("_", " "),
+    //   statusKeys: [status],
+    //   color: (flow.statusColors && flow.statusColors[status]) || flow.columns?.[index]?.color || "#6366f1",
+    //   wipLimit: null,
+    //   order: index + 1,
+    // }));
+    // const columns = flow.columns;
+    const columns= flow.columns.map((item,idx)=>({
+      columnId: `flow_col_${idx + 1}`,
+      name: (item.name || '').toString().replaceAll("_", " "),
+      statusKeys: item.statusKeys,
+      color: item.color,
       wipLimit: null,
-      order: index + 1,
-    }));
+      order: idx + 1,
+    }))
+
+
+
+
+    console.log(columns,"columns")
 
     // 4️⃣ Generate statusColors & statusWorkflow
-    const statusColors = {};
-    const statusWorkflow = {};
-    const ticketFlowTypes = new Set();
+// 4️⃣ Generate statusColors & statusWorkflow
+// 4️⃣ Generate statusColors & statusWorkflow (INDEX ORDER PRESERVED)
+// 4️⃣ Generate statusColors & statusWorkflow
+const statusColors = {};
+const statusWorkflow = {};
+const ticketFlowTypes = new Set();
 
-    columns.forEach((column, idx) => {
-      const currentStatuses = column.statusKeys;
-      const nextStatuses = columns[idx + 1]?.statusKeys || [];
+// columns are already ordered by index
+columns.forEach((col, index) => {
+  // keep column order
+  ticketFlowTypes.add(col.name);
 
-      currentStatuses.forEach((status) => {
-        ticketFlowTypes.add(status);
+  // ✅ store statusKeys as an ordered array
+  statusWorkflow[col.name] = [...col.statusKeys.filter((item)=>item!==col.name)];
 
-        // Assign colors per column
-        statusColors[status] = {
-          bg: `${column.color}22`, // background with opacity
-          text: column.color,
-          border: column.color,
-        };
+  // colors per column
+  statusColors[col.name] = {
+    bg: `${col.color}22`,
+    text: col.color,
+    border: col.color,
+  };
+});
 
-        // Status can move to any status in current + next column, except itself
-        statusWorkflow[status] = Array.from(
-          new Set([...currentStatuses, ...nextStatuses])
-        ).filter((s) => s !== status);
-      });
-    });
+
+    // columns.forEach((column, idx) => {
+    //   const currentStatuses = column.statusKeys;
+    //   const nextStatuses = columns[idx + 1]?.statusKeys || [];
+
+    //   currentStatuses.forEach((status) => {
+    //     ticketFlowTypes.add(status);
+
+    //     // Assign colors per column
+    //     statusColors[status] = {
+    //       bg: `${column.color}22`, // background with opacity
+    //       text: column.color,
+    //       border: column.color,
+    //     };
+
+    //     // Status can move to any status in current + next column, except itself
+    //     statusWorkflow[status] = Array.from(
+    //       new Set([...currentStatuses, ...nextStatuses])
+    //     ).filter((s) => s !== status);
+    //   });
+    // });
 
     return res.status(200).json({
       projectId,
@@ -340,7 +372,6 @@ export const getScrumFlowForProject = async (req, res) => {
     });
   }
 };
-
 
 export const getSprintBoardForProject = async (req, res) => {
   try {
@@ -371,38 +402,38 @@ export const getSprintBoardForProject = async (req, res) => {
       });
     }
 
-    // 3️⃣ Sort columns (defensive)
-    const columns = Array.isArray(board.columns)
-      ? [...board.columns].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-      : [];
+    // 3️⃣ Normalize & preserve column order
+    const columns = (board.columns || [])
+      .map((item, idx) => ({
+        columnId: `board_col_${idx + 1}`,
+        name: (item.name || "").toString().replaceAll("_", " "),
+        statusKeys: Array.isArray(item.statusKeys) ? item.statusKeys : [],
+        color: item.color || "#6366f1",
+        wipLimit: item.wipLimit ?? null,
+        order: idx + 1,
+      }))
+      .sort((a, b) => a.order - b.order);
 
-    /**
-     * 4️⃣ Derive workflow + colors
-     * Column order defines forward movement
-     */
+    // 4️⃣ Generate statusColors & statusWorkflow (SAME AS FLOW)
     const statusColors = {};
     const statusWorkflow = {};
     const ticketFlowTypes = new Set();
 
-    columns.forEach((column, index) => {
-      const current = column.statusKeys;
-      const next = columns[index + 1]?.statusKeys || [];
+    columns.forEach((col) => {
+      // Track column names
+      ticketFlowTypes.add(col.name);
 
-      current.forEach((status) => {
-        ticketFlowTypes.add(status);
+      // ✅ workflow = statusKeys (FILTER SELF IF PRESENT)
+      statusWorkflow[col.name] = col.statusKeys.filter(
+        (status) => status !== col.name
+      );
 
-        if (!statusColors[status]) {
-          statusColors[status] = {
-            bg: `${column.color}22`,
-            text: column.color,
-            border: column.color,
-          };
-        }
-
-        statusWorkflow[status] = Array.from(
-          new Set([...current, ...next])
-        ).filter((s) => s !== status);
-      });
+      // Assign colors per column
+      statusColors[col.name] = {
+        bg: `${col.color}22`,
+        text: col.color,
+        border: col.color,
+      };
     });
 
     return res.status(200).json({
