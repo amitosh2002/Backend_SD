@@ -125,8 +125,8 @@ const TicketSchema = new mongoose.Schema(
       required: false,
       trim: true,
     },
-    branch: {
-      type: {
+    githubBranches: [
+      {
         name: { type: String, trim: true },
         url: { type: String, trim: true },
         status: {
@@ -134,9 +134,9 @@ const TicketSchema = new mongoose.Schema(
           enum: ["CREATED", "MERGED", "DELETED"],
           default: "CREATED",
         },
-      },
-      required: false,
-    },
+        createdAt: { type: Date, default: Date.now }
+      }
+    ],
     totalTimeLogged: {
         type: Number,
         default: 0,

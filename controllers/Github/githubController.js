@@ -1,16 +1,32 @@
 import { Octokit } from "@octokit/rest";
 import Branch from "../../models/Branch.js";
 import { octokit, collectRepoBranchAnalytics } from "../../services/githubServices.js";
+import { GithubConfigModel } from "../../models/PlatformModel/GithubConfigModel.js";
+import { decrypt } from "../../utility/securityUtility.js";
 
 // Ensure we have a fallback Octokit if service import fails
 const localOctokit = octokit || new Octokit({ auth: process.env.GITHUB_TOKEN });
 
+const getOctokit = async (projectId) => {
+  if (!projectId) return localOctokit;
+  const config = await GithubConfigModel.findOne({ projectId });
+  if (config && config.githubSecretCode) {
+    const decryptedToken = decrypt(config.githubSecretCode);
+    if (decryptedToken) {
+      return new Octokit({ auth: decryptedToken });
+    }
+  }
+  return localOctokit;
+};
+
 // List repos of authenticated user
 export const listRepos = async (req, res) => {
   try {
+    const { projectId } = req.query;
+    const client = await getOctokit(projectId);
     const per_page = Math.min(parseInt(req.query.per_page || 100, 10), 100);
     const page = Math.max(parseInt(req.query.page || 1, 10), 1);
-    const { data } = await localOctokit.repos.listForAuthenticatedUser({ per_page, page });
+    const { data } = await client.repos.listForAuthenticatedUser({ per_page, page });
     return res.json({ success: true, repos: data, page, per_page });
   } catch (err) {
     console.error('listRepos error:', err);
@@ -38,9 +54,11 @@ export const createRepo = async (req, res) => {
 export const listBranches = async (req, res) => {
   try {
     const { owner, repo } = req.params;
+    const { projectId } = req.query;
     if (!owner || !repo) return res.status(400).json({ success: false, message: 'owner and repo are required' });
+    const client = await getOctokit(projectId);
     const per_page = Math.min(parseInt(req.query.per_page || 100, 10), 100);
-    const { data } = await localOctokit.repos.listBranches({ owner, repo });
+    const { data } = await client.repos.listBranches({ owner, repo });
     res.json(data);
   } catch (err) {
     console.error('listBranches error:', err);
@@ -52,11 +70,13 @@ export const listBranches = async (req, res) => {
 export const createBranch = async (req, res) => {
   try {
     const { owner, repo } = req.params;
-    const { newBranchName, fromBranch } = req.body;
+    const { newBranchName, fromBranch, projectId } = req.body;
     if (!owner || !repo || !newBranchName || !fromBranch) return res.status(400).json({ success: false, message: 'owner, repo, newBranchName and fromBranch are required' });
 
+    const client = await getOctokit(projectId);
+
     // 1. Get the reference SHA of the branch to copy
-    const { data: refData } = await localOctokit.git.getRef({
+    const { data: refData } = await client.git.getRef({
       owner,
       repo,
       ref: `heads/${fromBranch}`,
@@ -65,17 +85,48 @@ export const createBranch = async (req, res) => {
     const sha = refData.object.sha;
 
     // 2. Create a new ref
-    const { data } = await localOctokit.git.createRef({
+    const { data } = await client.git.createRef({
       owner,
       repo,
       ref: `refs/heads/${newBranchName}`,
       sha,
     });
 
-    res.status(201).json({ success: true, branch: data });
+    const branchUrl = `https://github.com/${owner}/${repo}/tree/${newBranchName}`;
+
+    // 3. Store in Ticket if ticketId is provided
+    const { ticketId } = req.body;
+    if (ticketId) {
+      const { TicketModel } = await import("../../models/TicketModels.js");
+      await TicketModel.findByIdAndUpdate(ticketId, {
+        $push: {
+          githubBranches: {
+            name: newBranchName,
+            url: branchUrl,
+            status: "CREATED"
+          }
+        }
+      });
+    }
+
+    res.status(201).json({ success: true, branch: data, branchUrl });
   } catch (err) {
     console.error('createBranch error:', err);
-    res.status(500).json({ success: false, message: 'Failed to create branch', error: err.message });
+    
+    // Better error message for common GitHub permission issues
+    if (err.status === 403 && err.message?.includes('Resource not accessible by personal access token')) {
+        return res.status(403).json({ 
+            success: false, 
+            message: 'GitHub Token missing permissions. Please ensure your token has "repo" scope (classic) or "Contents: Write" permission (fine-grained).',
+            error: err.message 
+        });
+    }
+
+    res.status(err.status || 500).json({ 
+        success: false, 
+        message: err.status === 403 ? 'Permission denied by GitHub. Check your token scopes.' : 'Failed to create branch', 
+        error: err.message 
+    });
   }
 };
 // controllers/branchController.js
