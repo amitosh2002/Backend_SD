@@ -228,23 +228,35 @@ export const getSprintsForPartner = async (req, res) => {
   }
 };
 
-
 export const updateSprint = async (req, res) => {
   try {
     const { sprintId } = req.params;
-    const updates = req.body;
 
-    // ❌ Block manual isActive update
+    // 🔥 FIX: extract nested updates
+    const updates = { ...req.body.updates };
+
+    // 🔒 Block protected fields
     delete updates.isActive;
     delete updates.sprintNumber;
     delete updates.projectId;
     delete updates.partnerId;
 
-    const sprint = await PartnerSprint.findOneAndUpdate(
-      { id: sprintId },
-      updates,
-      { new: true }
+    // ✅ name → sprintName
+    if (updates.name) {
+      updates.sprintName = updates.name;
+      delete updates.name;
+    }
+
+    // ✅ Convert dates
+    if (updates.startDate) updates.startDate = new Date(updates.startDate);
+    if (updates.endDate) updates.endDate = new Date(updates.endDate);
+
+    const sprint = await partnerSprint.findOneAndUpdate(
+      { id: sprintId },          // UUID
+      { $set: updates },        
+      { new: true, runValidators: true }
     );
+
 
     if (!sprint) {
       return res.status(404).json({
@@ -253,17 +265,24 @@ export const updateSprint = async (req, res) => {
       });
     }
 
-    return res.status(200).json({ success: true, sprint });
+    return res.status(200).json({
+      success: true,
+      sprint,
+    });
   } catch (error) {
     console.error("Error updating sprint:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
 };
+
 export const deactivateSprint = async (req, res) => {
   try {
     const { sprintId } = req.params;
 
-    const sprint = await PartnerSprint.findOne({ id: sprintId });
+    const sprint = await partnerSprint.findOne({ id: sprintId });
 
     if (!sprint) {
       return res.status(404).json({
@@ -280,6 +299,8 @@ export const deactivateSprint = async (req, res) => {
     }
 
     sprint.isActive = false;
+    sprint.endDate= new Date()
+    sprint.status="COMPLETED";
     await sprint.save();
 
     return res.status(200).json({
@@ -360,12 +381,13 @@ export const getProjectSprintOverview = async (req, res) => {
 
     if (projectId) {
       // Specific project requested
+      console.log("enter the if")
       projectIds = [projectId];
     } else {
       // Fetch all projects user has access to
       const accesses = await UserWorkAccess.find({
         userId,
-        accessType: { $gte: 200 },
+        accessType: { $gte: 300 },
         status: "accepted",
       }).lean();
 
@@ -378,15 +400,15 @@ export const getProjectSprintOverview = async (req, res) => {
         });
       }
 
-      projectIds = accesses.map(a => a.projectId.toString());
+      projectIds = [...new Set(accesses.map(a => a.projectId.toString()))];
     }
-
+    console.log(projectIds,"list ")
     const allProjectSprints = [];
 
     // Loop through each project
     for (const pid of projectIds) {
       // Fetch all sprints for the project
-      const sprints = await partnerSprint.find({ projectId: pid })
+      const sprints = await partnerSprint.find({ projectId: pid, })
         .sort({ sprintNumber: 1 })
         .lean();
 
@@ -449,3 +471,70 @@ export const getProjectSprintOverview = async (req, res) => {
   }
 };
 
+export const startSprintManually = async (req, res) => {
+  try {
+    const { sprintId } = req.body;
+
+    if (!sprintId) {
+      return res.status(400).json({
+        success: false,
+        message: "sprintId is required"
+      });
+    }
+
+    // 1️⃣ Find the sprint to start
+    const sprintToStart = await partnerSprint.findOne({ id: sprintId });
+
+    if (!sprintToStart) {
+      return res.status(404).json({
+        success: false,
+        message: "Sprint not found"
+      });
+    }
+
+    const { projectId } = sprintToStart;
+
+    // 2️⃣ Complete any active sprint in the same project
+    await partnerSprint.updateMany(
+      {
+        projectId,
+        isActive: true,
+        status:{$ne:"PLANNED"},
+        id: { $ne: sprintId } // do not complete the same sprint
+      },
+      {
+        $set: {
+          isActive: false,
+          status: "COMPLETED",
+          endDate: new Date()
+        }
+      }
+    );
+
+    // 3️⃣ Start the selected sprint
+    const startedSprint = await partnerSprint.findOneAndUpdate(
+      { id: sprintId },
+      {
+        $set: {
+          isActive: true,
+          status: "ACTIVE",
+          startDate: new Date()
+        }
+      },
+      { new: true }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Sprint started successfully",
+      sprint: startedSprint
+    });
+
+  } catch (error) {
+    console.error("Error starting sprint:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
