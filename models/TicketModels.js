@@ -29,20 +29,6 @@ const TICKET_TYPES = [
   "LIVEOPS",
   "PLAT",
 ];
-const ENUMS =[
-  "OPEN",
-    "IN_PROGRESS",
-    "IN_REVIEW",
-    "DEV_TESTING",
-    "RESOLVED",
-    "M1 TESTING COMPLETED",
-    "M2 TESTING COMPLETED",
-    "REJECTED",
-    "ON_HOLD",
-    "REOPENED",
-    "CLOSED",
-     null 
-]
 
 const TicketSchema = new mongoose.Schema(
   {
@@ -105,10 +91,6 @@ const TicketSchema = new mongoose.Schema(
       type: String,
       required: false,
       trim: true,
-      enum: {
-        values:ENUMS,
-        message: "Invalid status",
-      },
       default: "OPEN",
     },
       description: {
@@ -125,8 +107,8 @@ const TicketSchema = new mongoose.Schema(
       required: false,
       trim: true,
     },
-    branch: {
-      type: {
+    githubBranches: [
+      {
         name: { type: String, trim: true },
         url: { type: String, trim: true },
         status: {
@@ -134,9 +116,9 @@ const TicketSchema = new mongoose.Schema(
           enum: ["CREATED", "MERGED", "DELETED"],
           default: "CREATED",
         },
-      },
-      required: false,
-    },
+        createdAt: { type: Date, default: Date.now }
+      }
+    ],
     totalTimeLogged: {
         type: Number,
         default: 0,

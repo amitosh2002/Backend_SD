@@ -1,5 +1,5 @@
 import express from "express";
-import { createBoardConfig, createFlow, getBoardConfigByProject, getFlowById, getFlows, getScrumFlowForProject, getSprintBoardForProject, importBoardFromProject, updateBoardConfig, updateFlow, UpdateSprintFlowForProject } from "../../controllers/SprintController/confrigurator.js";
+import { createBoardConfig, createFlow, getBoardConfigByProject, getFlowById, getFlows, getScrumFlowForProject, getSprintBoardForProject, importBoardFromProject, saveOrUpdateProjectBoard, updateBoardConfig, updateFlow, UpdateSprintFlowForProject } from "../../controllers/SprintController/confrigurator.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 
 
@@ -23,7 +23,7 @@ router.post("/key-board",authenticateToken,getSprintBoardForProject)
 
 router.post("/board",authenticateToken, createBoardConfig);
 router.get("/board/:projectId",authenticateToken, getBoardConfigByProject);
-router.put("/board/:boardId", authenticateToken,updateBoardConfig);
+router.post("/key-board/update", authenticateToken,saveOrUpdateProjectBoard);
 router.post("/board/import", authenticateToken,importBoardFromProject);
 //============================= Board route ==================//
 
