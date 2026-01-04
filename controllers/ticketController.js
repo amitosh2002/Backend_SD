@@ -109,18 +109,18 @@ export const createTicketV2 = async (req, res) => {
 
     // adding logs for ticket creation 
 
-    // await ActivityLog.create(
-    //   {
-    //     userId:userId,
-    //     projectId:ticket.projectId,
-    //     actionType:LogActionType.TICKET_CREATE,
-    //     targetType:LogEntityType.TASK,
-    //     targetId:ticket.id ?? ticket._id,
-    //     changes:[{
-    //       newValue:ticket.ticketKey,
-    //     }],
-    //   }
-    // )
+    await ActivityLog.create(
+      {
+        userId:userId,
+        projectId:ticket.projectId,
+        actionType:LogActionType.TICKET_CREATE,
+        targetType:LogEntityType.TASK,
+        targetId:ticket.id ?? ticket._id,
+        changes:{
+          newValue:ticket.ticketKey,
+        },
+      }
+    )
 
     return res.status(201).json({
       success: true,
@@ -181,11 +181,10 @@ export const listTickets = async (req, res) => {
       priority,
       assignee,
       reporter,
-      userId, // Used for access control, assumed to be available
       projectId,
       partnerId,
     } = req.query;
-
+    const userId = req.user.userId;
     const numericLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 200);
     const numericPage = Math.max(parseInt(page, 10) || 1, 1);
 
@@ -355,9 +354,9 @@ export const updateTicket = async (req, res) => {
         actionType:LogActionType.TICKET_UPDATE,
         targetType:LogEntityType.TASK,
         targetId:id,
-        changes:[{
-          newValue:update,
-        }],
+        changes:{
+          newValue:updated.ticketKey,
+        },
       }
     )
     if (!updated) return res.status(404).json({ message: "Ticket not found" });
@@ -378,11 +377,12 @@ export const addTimeLog = async (req, res) => {
       note,            // The description of the work
       loggedBy         // The ID or name of the user logging the time
     } = req.body;
+    const userId = req.user.userId;
 
     // --- Input Validation ---
     
     // Check for required fields
-    if (!ticketId || durationSeconds == null || !loggedBy) {
+    if (!ticketId || durationSeconds == null || !userId) {
       return res.status(400).json({ 
         message: "Missing required fields: ticketId, durationSeconds, or loggedBy." 
       });
@@ -409,7 +409,7 @@ export const addTimeLog = async (req, res) => {
             // 💡 Using durationMinutes to fit your original schema field 'minutes'
             minutes: durationMinutes, 
             note, 
-            loggedBy 
+            userId 
           } 
         } ,
          $inc: { totalTimeLogged: durationMinutes } // Targets the new top-level field
@@ -425,9 +425,9 @@ export const addTimeLog = async (req, res) => {
         actionType:LogActionType.ADD_TIME_LOG,
         targetType:LogEntityType.TASK,
         targetId:ticketId,
-        changes:[{
+        changes:{
           newValue:durationMinutes,
-        }],
+        },
       })
 
     // 3. Handle Not Found
@@ -483,11 +483,51 @@ export const setStatus = async (req, res) => {
   }
 };
 
+export const unassignTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const userId = req.user.userId;
+    // const updated = await TicketModel.findByIdAndUpdate(
+    //   id,
+    //   { status },
+    //   { new: true, runValidators: true }
+    // );
+
+    const ticket = await TicketModel.findByIdAndUpdate(id, { assignee:"Unassigned" });
+
+  
+ 
+ 
+    await ticket.save();
+
+      await ActivityLog.create({
+        userId: req.user.userId,
+        projectId: ticket.projectId,
+        actionType: LogActionType.TICKET_UNASSIGN,
+        targetType: LogEntityType.TASK,
+        targetId: ticket._id,
+        changes: 
+          {
+            field: 'assignee',
+            prevValue: ticket.assignee,
+            newValue: "Unassigned",
+          },
+        
+      });
+    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+    return res.status(200).json({msg:"ticket status updated"});
+  } catch (err) {
+    console.error("Error setting status:", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 // Assuming TicketModel and User model are imported
 export const setAssignee = async (req, res) => {
     try {
+        const userId = req.user.userId;
         const ticketId = req.params.id;
-        const  {userId}  = req.body;
         console.log(userId,"dfvgbh")
         // ... (Input Validation remains the same) ...
         if (!userId || !ticketId) {
@@ -515,7 +555,22 @@ export const setAssignee = async (req, res) => {
         if (!updatedTicket) {
             return res.status(404).json({ success: false, message: `Ticket with ID ${ticketId} not found.` });
         }
+
+        // adding log 
+          await ActivityLog.create({
+        userId: req.user.userId,
+        projectId: updatedTicket.projectId,
+        actionType: LogActionType.TICKET_ASSIGN,
+        targetType: LogEntityType.TASK,
+        targetId: updatedTicket._id,
+        changes: 
+          {
+            field: 'assignee',
+            prevValue: "",
+            newValue: updatedTicket.ticketKey,
+          },
         
+      });
         // Success
         return res.status(200).json({ success: true, ticket: updatedTicket });
     } catch (err) {
@@ -705,7 +760,6 @@ export const getTicketByQuery = async (req, res) => {
 
 export const addStoryPoint = async (req, res) => {
   const {  storyPoint } = req.body;
-console.log(req.body)
   // 1. Input Validation Check
   if (!storyPoint.userId || storyPoint === undefined || !storyPoint.ticketId) {
     // Note: storyPoint might be 0, so check against undefined/null, not just falsy value
@@ -732,6 +786,19 @@ console.log(req.body)
       });
     }
 
+    // adding logs for ticket update
+    await ActivityLog.create(
+      {
+        userId:storyPoint.userId,
+        projectId:updatedTicket.projectId,
+        actionType:LogActionType.TICKET_STORYPOINT,
+        targetType:LogEntityType.TASK,
+        targetId:updatedTicket.id ?? updatedTicket._id,
+        changes:{
+          newValue:updatedTicket.storyPoint,
+        },
+      }
+    )
     // 4. Success Response
     return res.status(200).json({
       message: "Story point successfully added/updated.",
