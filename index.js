@@ -15,6 +15,7 @@ import inviteRoutes from "./routes/inviteRoutes.js";
 import sprintRoutes from "./routes/SprintRoutes/sprintRouteV1.js"
 import "./cronjs/cronjob.js";
 import guiRoutes from './routes/GUI_routes/guiRoutes.js';
+import aiRouter from "./routes/alRoute/aiRoute.js";
 // import aiRouter from "./routes/alRoute/aiRoute.js";
 import googleLoginRoute from "./routes/SSO/googleLogin.js";
 import { authenticateToken } from "./middleware/authMiddleware.js";
@@ -109,6 +110,10 @@ startServer();
 // }
 
 // routes initiliztion
+
+//ai routes
+app.use("/api/ai", aiRouter);
+
 app.use("/api/platform", projectRoutes); // routes for each project
 app.use("/api/platform", ticketRoutes); // ticket routes
 app.use("/api/email", emailRoutes); // email routes
@@ -134,7 +139,12 @@ app.use("/api/platform", userRoutes);
 app.get("/server", (req, res) => {
   res.send("Hello World!");
   
-},)
+}
+
+
+
+);
+
 app.use('/api/gui',guiRoutes);
 // table/otp
 

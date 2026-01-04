@@ -11,11 +11,13 @@
     "test-email": "node test-email.js",
     "test-auth": "node test-auth.js",
     "test-handlebars": "node test-handlebars.js",
-    "migrate": "node scripts/runMigration.js"
+    "migrate": "node scripts/runMigration.js",
+    "call-velocity": "node scripts/velocityRoutes.js"
   },
   "author": "Amitosh kumar",
   "license": "ISC",
   "dependencies": {
+    "@google/genai": "^1.30.0",
     "@octokit/rest": "^22.0.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
