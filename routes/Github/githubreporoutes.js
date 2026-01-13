@@ -15,7 +15,7 @@ import {
   getProjectReposAnalytics,
   getProjectReposAnalyticsFromDB,
 } from "../../controllers/Github/githubController.js";
-import { saveGithubConfig, getGithubConfig } from "../../controllers/Github/githubConfigController.js";
+import { saveGithubConfig, getGithubConfig, listAllConfigs, copyGithubConfig } from "../../controllers/Github/githubConfigController.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 
 const githubrouter = express.Router();
@@ -45,6 +45,8 @@ githubrouter.get('/repos/analytics/project/:projectId/cache', authenticateToken,
 
 // Config Management
 githubrouter.post('/config', authenticateToken, saveGithubConfig);
+githubrouter.get('/config/all', authenticateToken, listAllConfigs);
+githubrouter.post('/config/copy', authenticateToken, copyGithubConfig);
 githubrouter.get('/config/:projectId', authenticateToken, getGithubConfig);
 
 export default githubrouter;

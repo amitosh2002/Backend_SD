@@ -17,6 +17,7 @@ import {
   addStoryPoint,
   getWorkLogActivity,
   unassignTicket,
+  getSortKeyValues,
 } from "../controllers/ticketController.js";
 import { authenticateToken } from "../middleware/authMiddleware.js";
 
@@ -43,6 +44,9 @@ router.post("/v1/tickets/update/storyPoint",authenticateToken, addStoryPoint);
 
 //==============Logs and other routes ========= 
 router.post("/v1/tickets/getAll",authenticateToken,getWorkLogActivity)
+router.get("/v1/tickets/getSortKeyValues/get",authenticateToken,getSortKeyValues)
+
+
 
 
 export default router;
