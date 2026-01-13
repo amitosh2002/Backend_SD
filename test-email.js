@@ -1,6 +1,6 @@
 // import EmailService from "./services/emailService.js";
 import dotenv from "dotenv";
-import { sendEmail, sendProjectAssignment, sendTicketNotification, sendWelcomeEmail } from "./services/emailService.js";
+import { sendEmail, sendWelcomeEmail } from "./services/emailService.js";
 
 dotenv.config();
 

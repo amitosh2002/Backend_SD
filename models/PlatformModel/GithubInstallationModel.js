@@ -9,7 +9,7 @@ const GithubInstallationSchema = new mongoose.Schema({
     type: String,
   },
   partnerId: { type: String, ref: 'Partner', index: true },
-  connectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  connectedBy: { type:String, ref: 'User' },
   isActive: { type: Boolean, default: true },
   permissions: Object,
   accessTokenRef: { type: String, default: "" }, // optional reference to token storage or secrets manager. Avoid storing raw tokens in DB for production.

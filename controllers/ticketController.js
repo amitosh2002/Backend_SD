@@ -7,6 +7,7 @@ import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js
 import ActivityLog from "../models/PlatformModel/ActivityLogModel.js";
 import { LogActionType, LogEntityType } from "../models/PlatformModel/Enums/ActivityLogEnum.js";
 import { getUserDetailById } from "../utility/platformUtility.js";
+import ScrumProjectFlow from "../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 
 export const createTicket = async (req, res) => {
   try {
@@ -174,6 +175,7 @@ export const createTicketV2 = async (req, res) => {
 
 export const listTickets = async (req, res) => {
   try {
+
     const {
       page = 1,
       limit = 20,
@@ -181,14 +183,16 @@ export const listTickets = async (req, res) => {
       status,
       priority,
       assignee,
+      project,
       reporter,
-      projectId,
+      sort,
+      sprint,
       partnerId,
     } = req.query;
     const userId = req.user.userId;
     const numericLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 200);
     const numericPage = Math.max(parseInt(page, 10) || 1, 1);
-
+    const projectId = project;
     // Step 1: Find accepted access
     // Note: Assuming UserWorkAccess model and connection are available globally.
     const userAccessList = await UserWorkAccess.find({
@@ -216,32 +220,55 @@ export const listTickets = async (req, res) => {
         });
     }
 
-    // Step 3: Build filters
+    // --- 🔹 Build Filters ---
     const filters = {};
 
-    if (status) filters.status = status;
+    const buildInQuery = (val) => {
+      if (!val) return null;
+      if (Array.isArray(val)) return { $in: val };
+      if (typeof val === 'string' && val.includes(',')) {
+        return { $in: val.split(',').map(v => v.trim()) };
+      }
+      return val;
+    };
+
+    const statusQuery = buildInQuery(status);
+    if (statusQuery) filters.status = statusQuery;
+
     if (priority) filters.priority = priority;
-    if (assignee) filters.assignee = assignee;
+
+    const assigneeQuery = buildInQuery(assignee);
+    if (assigneeQuery) filters.assignee = assigneeQuery;
+
     if (reporter) filters.reporter = reporter;
 
-    // --- 🔹 Project Filter (Handles mixed UUID/ObjectId) ---
-    const projectIdString = projectId ? String(projectId) : null;
+    const sprintQuery = buildInQuery(sprint);
+    if (sprintQuery) filters.sprint = sprintQuery;
 
-    if (projectIdString) {
-      if (!allowedProjectIds.includes(projectIdString)) {
-        return res
-          .status(403)
-          .json({ message: "Access denied: no permission for this project." });
-      }
+    // --- 🔹 Sorting Logic ---
+    const sortField = sort || "updatedAt";
+    const sortOrder = -1; // Default to descending
+    const sortCriteria = { [sortField]: sortOrder };
 
-      // Check for ObjectId format to handle legacy/mixed IDs
-      if (projectIdString.length === 24 && mongoose.Types.ObjectId.isValid(projectIdString)) {
-        filters.projectId = new mongoose.Types.ObjectId(projectIdString);
-      } else {
-        // Assume UUID string
-        filters.projectId = projectIdString;
-      }
+    // --- 🔹 Project Filter (Handles mixed UUID/ObjectId and Arrays) ---
+    if (project) {
+      const projectItems = typeof project === 'string' ? project.split(',').map(v => v.trim()) : [project];
       
+      // Filter out any projects the user doesn't have access to
+      const validProjectIds = projectItems.filter(id => allowedProjectIds.includes(String(id)));
+
+      if (validProjectIds.length === 0) {
+        return res.status(403).json({ message: "Access denied: no permission for these projects." });
+      }
+
+      const mixedProjectIds = validProjectIds.map(id => {
+        if (id.length === 24 && mongoose.Types.ObjectId.isValid(id)) {
+          return new mongoose.Types.ObjectId(id);
+        }
+        return id;
+      });
+
+      filters.projectId = { $in: mixedProjectIds };
     } else if (allowedProjectIds.length > 0) {
       // If no projectId is specified, filter by all allowed projects.
       const mixedProjectIds = allowedProjectIds.map(id => {
@@ -281,7 +308,7 @@ export const listTickets = async (req, res) => {
     // Step 4: Query tickets
     const [items, total] = await Promise.all([
             TicketModel.find(filters)
-              .sort({ createdAt: -1 })
+              .sort(sortCriteria)
               .skip((numericPage - 1) * numericLimit)
               .limit(numericLimit)
               .lean(),
@@ -852,3 +879,46 @@ export const getWorkLogActivity = async (req, res) => {
     return res.status(500).json({ msg: "Something went wrong" });
   }
 };
+
+
+// this controller is for status values for filtering tickets
+export const getSortKeyValues= async (req,res)=>{
+
+  try {
+
+    const userId = req.user.userId;
+    const userWorkAccess = await UserWorkAccess.find({ userId: userId });
+
+    if (!userWorkAccess || userWorkAccess.length === 0) {
+      return res.status(404).json({ msg: "User not found" });
+    }
+    const projectIds = userWorkAccess.map(userWorkAccess => userWorkAccess.projectId);
+    const allWorkingUsers = await UserWorkAccess.find({ projectId: { $in: projectIds } });
+    const allUsers = await User.find({ _id: { $in: allWorkingUsers.map(allWorkingUsers => allWorkingUsers.userId) } }).select('_id profile email');
+    const workFLow = await ScrumProjectFlow.find({ projectId: { $in: projectIds } });
+    const wokFlowStatus =  workFLow.map(workFLow => workFLow.columns.map(columns => columns.name)).flat();
+    const uniqueStatus = [...new Set(wokFlowStatus)];
+    const uniqueUsers = [...new Set(allUsers)];
+    const projects = await ProjectModel.find({
+              projectId: { $in: projectIds }
+            }).select('projectId projectName').lean();
+
+    return res.status(200).json({
+      success: true,
+      users: uniqueUsers,
+      status: uniqueStatus,
+      projects: projects,
+      msg: "Success fetch sort key values",
+    });
+  } catch (error) {
+    console.error("getSortKeyValues error:", error);
+    return res.status(500).json({ msg: "Something went wrong" });
+  }
+
+
+
+
+
+
+
+}

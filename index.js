@@ -11,6 +11,7 @@ import configuratorRoute from "./routes/SprintRoutes/confriguratorRoute.js";
 import cors from "cors";
 import keyValueRoute from "./routes/keyValuePairRoutes.js";
 import githubrouter from "./routes/Github/githubreporoutes.js";
+import githubAuthRouter from "./routes/Github/githubAuthRoutes.js";
 import inviteRoutes from "./routes/inviteRoutes.js";
 import sprintRoutes from "./routes/SprintRoutes/sprintRouteV1.js"
 import "./cronjs/cronjob.js";
@@ -123,6 +124,7 @@ app.use("/api/platform", keyValueRoute);
 app.use("/api/platform", userRoutes);
 // for github intregation 
 app.use("/api/gihub-repo",githubrouter)
+app.use("/api/auth/github", githubAuthRouter);
 // app.use("/api/partner",inviteRoutes);
 app.use("/api/partner",inviteRoutes);
 app.use("/api/auth/sso", googleLoginRoute);
