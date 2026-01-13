@@ -36,6 +36,7 @@ app.use(express.json());
 const allowedOrigins = [
   "http://localhost:5173",
   "https://sd-tracking.onrender.com",
+  "https://dev-hora.netlify.app",
 ];
 
 app.use(
@@ -170,4 +171,5 @@ app.get("/analytics", (req, res) => {
 // Start the server
 app.listen(8000, () => {
     console.log("Dashboard active on http://localhost:8000/get/server");
+
 }); // Fixed: removed extra parentheses and commas
