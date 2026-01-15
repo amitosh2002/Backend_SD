@@ -59,10 +59,10 @@ const TicketSchema = new mongoose.Schema(
     
     set: (val) => val ? val.toUpperCase() : val, 
     
-    enum: {
-        values: TICKET_TYPES,
-        message: "Invalid ticket type. Must be one of: {VALUE}",
-    },
+    // enum: {
+    //     values: TICKET_TYPES,
+    //     message: "Invalid ticket type. Must be one of: {VALUE}",
+    // },
 },
     sequenceNumber: {
       type: Number,
@@ -78,15 +78,10 @@ const TicketSchema = new mongoose.Schema(
       index: true,
     },
     priority: {
-      type: String,
-      required: false,
-      trim: true,
-      enum: {
-        values: ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
-        message: "Priority must be LOW, MEDIUM, HIGH, or CRITICAL",
+      type: [String],   // array of label IDs
+        default: [],
+        index: true
       },
-      default: "MEDIUM",
-    },
     status: {
       type: String,
       required: false,
@@ -169,13 +164,13 @@ const TicketSchema = new mongoose.Schema(
         timestamp: { type: Date, default: Date.now },
       },
     ],
-    labels: [
-      {
-        type: String,
-        trim: true,
-      },
-    ],
-    dueDate: {
+      labels: {
+        type: [String],   // array of label IDs
+        default: [],
+        index: true
+      }
+      ,
+          dueDate: {
       type: Date,
       required: false,
     },

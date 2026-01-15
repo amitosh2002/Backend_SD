@@ -662,3 +662,20 @@ export const getUserDetailById=async(id)=>{
     throw new error;
   }
 }
+
+
+// 1. Helper function to extract, flatten, and unique-ify by ID 
+export const getCleanUniqueItems = (configArray, key, fields) => {
+  // Flatten the nested arrays from all projects
+  const allItems = configArray.flatMap(item => item[key] || []);
+  
+  // Use a Map to ensure uniqueness by 'id'
+  const uniqueMap = new Map(allItems.map(item => [item.id, item]));
+  
+  // Convert back to array and "Pick" only the specific fields requested
+  return Array.from(uniqueMap.values()).map(item => {
+    const picked = {};
+    fields.forEach(field => picked[field] = item[field]);
+    return picked;
+  });
+};
