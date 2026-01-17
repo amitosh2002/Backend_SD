@@ -351,10 +351,18 @@ export const listTickets = async (req, res) => {
         sprints.map(s => [s.id, s.sprintName])
       );
 
-      items.forEach(ticket => {
-        ticket.sprintName = sprintMap[ticket.sprint] || "";
-      });
+ 
     }
+
+    // updatinthe assigne details with name
+      await Promise.all(
+        items.map(async (ticket) => {
+          const user = await getUserDetailById(ticket?.assignee);
+          ticket.assignee = user?.name || "";
+          console.log(ticket.assignee)
+        })
+      );
+
 
     /* ---------------------------------------------
        8️⃣ Response
@@ -373,15 +381,29 @@ export const listTickets = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
-
 export const getTicketById = async (req, res) => {
   try {
     const { id } = req.params;
-    const ticket = await TicketModel.findById(id);
-    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+
+    // 1. Use .lean() to get a plain JS object (faster & mutable)
+    // 2. Use .populate if your schema allows it
+    const ticket = await TicketModel.findById(id).lean();
+
+    // 3. Early return if ticket doesn't exist
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+
+    // 4. Fetch user details only after confirming ticket exists
+    if (ticket.assignee) {
+      const user = await getUserDetailById(ticket.assignee);
+      // Now it's safe to replace the ID with the name
+      ticket.assignee = user?.name || "Unassigned";
+    }
+
     return res.status(200).json(ticket);
   } catch (err) {
-    console.error("Error getting ticket:", err);
+    console.error("Error getting ticket:", err); // Keep logging for debugging
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -586,11 +608,10 @@ export const setAssignee = async (req, res) => {
         }
 
         // --- Find Assignee Details ---
-        const assigneeDetails = await User.findById(userId);
 
-        if (!assigneeDetails) {
-            return res.status(404).json({ success: false, message: `User with ID ${userId} not found.` });
-        }
+        // if (!assigneeDetails) {
+        //     return res.status(404).json({ success: false, message: `User with ID ${userId} not found.` });
+        // }
 
         // 💡 FIX 2: Check the property on the User model. It's usually '_id' for reference.
         // Assuming your TicketModel 'assignee' field is of type { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
@@ -598,7 +619,7 @@ export const setAssignee = async (req, res) => {
             ticketId,
             { 
                 // 💡 CRITICAL FIX: Save the user's MongoDB ID for proper referencing/population
-                assignee: assigneeDetails.username 
+                assignee: userId 
             },
             { new: true, runValidators: true }
         );

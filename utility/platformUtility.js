@@ -651,7 +651,8 @@ export const normalizeSprintView = ({ board, flow }) => {
 export const getUserDetailById=async(id)=>{
   try {
     if (!id) {
-    throw new error;
+    // throw new error;
+    console.log("No ID provided");
     }
     let userDetails = await User.findById(id);
     return {
@@ -659,7 +660,11 @@ export const getUserDetailById=async(id)=>{
         email:userDetails.email
     }
   } catch (error) {
-    throw new error;
+    // throw new error;// foir updated db uri
+    return {
+        name: "",
+        email:""
+    }
   }
 }
 
