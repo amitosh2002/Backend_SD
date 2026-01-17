@@ -1,6 +1,8 @@
 import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
+import partnerSprint from "../../models/PlatformModel/SprintModels/partnerSprint.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import { TicketModel } from "../../models/TicketModels.js";
+import { getAppSprintAnalytics } from "../../utility/platformUtility.js";
 
 export const getSprintBurndown = async (req, res) => {
   try {
@@ -109,84 +111,106 @@ export const getSprintVelocity = async (req, res) => {
   }
 };
 
- 
+ export const platVelocityMatrix = async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    console.log("platVelocityMatrix hit");
 
-export const platVelocityMatrix = async(req,res)=>{
-    const userId=req.user.userId;
-    console.log("first")
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID missing",
+      });
+    }
 
-try {
+    // 1️⃣ Get projects user has access to
+    const allProjects = await UserWorkAccess
+      .find({ userId, accessType: { $gt: 200 } })
+      .select("projectId")
+      .lean();
 
-  // if (!userId )return res.status(400).json({success:false,message:"User ID missing"});
+    const projectIds = [...new Set(allProjects.map(p => p.projectId))];
 
-  // const allProjects =await UserWorkAccess.find({userId:userId ,accessType:{$gt:200}}).select("projectId").lean();
-  // const allUserInProjects= await UserWorkAccess.find({projectId:{$in:allProjects.map(p=>p.projectId)},accessType:{$gt:200}}).select("userId ").lean();
+    if (!projectIds.length) {
+      return res.json({
+        success: true,
+        data: [],
+        message: "No projects found",
+      });
+    }
+
+    // 2️⃣ Group tickets by project
+    const ticketsByProject = await TicketModel.aggregate([
+      {
+        $match: {
+          projectId: { $in: projectIds },
+        },
+      },
+      {
+        $group: {
+          _id: "$projectId",
+          tickets: { $push: "$$ROOT" },
+        },
+      },
+    ]);
+    console.log(ticketsByProject)
+
+    // const ticketWiseAnalytics = ticketsByProject.map( project => ({
+    //   projectId: project._id,
+    //   ticketSprint:project.ticket.sprint
+    //     // tickets: await getAppSprintAnalytics(project.tickets.sprint),
+    //   }));
+
+    // console.log(ticketWiseAnalytics,"sprint")
   
+const sprintReport = []
 
-  // const Users = [...new Set(allUserInProjects.map(u=>u.userId))];
-  // const Projects=[...new Set(allProjects.map(p=>p.projectId))];
 
-  // const allTicket = await Task.find({projectId:{$in:Projects}}).lean();
-  // // const sprintAnalytics = 
-  // for (const allTickets of allTicket) {
-  //   // compute velocity matrix
 
-  //   const
-  // }
 
+
+
+
+    const projectSprint = await partnerSprint.find({projectId:{$in:projectIds}}).sort({startDate:-1}).lean();
+    // console.log(projectSprintVelocity,"psv")
   
-
-
-  if (!userId) {
-  return res.status(400).json({
-    success: false,
-    message: "User ID missing",
-  });
-}
-
-// 1️⃣ Get projects user has access to
-const allProjects = await UserWorkAccess
-  .find({ userId, accessType: { $gt: 200 } })
-  .select("projectId")
-  .lean();
-
-const projectIds = [...new Set(allProjects.map(p => String(p.projectId)))];
-
-// 2️⃣ Get tickets for those projects
-const allTickets = await TicketModel
-  .find({ projectId: { $in: projectIds } })
-  .lean();
-const ticketsByProject = await TicketModel.aggregate([
-  {
-    $match: {
-      projectId: { $in: projectIds },
-    },
-  },
-  {
-    $group: {
-      _id: "$projectId",
-      tickets: { $push: "$$ROOT" },
-    },
-  },
-]);
-
-
-console.log(ticketsByProject)
+    // const velocityMatrix = projectSprintVelocity.map( project => ({
+    //   projectId: project.projectId,
+    //   sprints: getAppSprintAnalytics(project.sprint),
+    // }));
 
 
 
+    for (const project of projectSprint) {
+      console.log(project)
+      const sprintAnalytics = await getAppSprintAnalytics(project.id);
+      sprintReport.push({
+        projectId: project._id,
+        sprintAnalytics,
+      });
+    }
+    // console.log(velocityMatrix,"vm")
+    console.log(sprintReport,"report")
 
+    // 3️⃣ Sprint analytics per project
+    // const velocityMatrix = ticketsByProject.map(project => ({
+    //   projectId: project.projectId,
+    //   sprints: getAppSprintAnalytics(project.tickets.sprint),
+    // }));
 
+    // ✅ ALWAYS RETURN RESPONSE
+    return res.json({
+      success: true,
+      data: velocityMatrix,
+    });
 
+  } catch (error) {
+    console.error("platVelocityMatrix error:", error);
 
-
-  
-
-} catch (error) {
-  
-
-}
-
-
-
-}
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};

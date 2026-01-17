@@ -56,6 +56,7 @@ export const createTicketV2 = async (req, res) => {
   try {
     const ticketData = req.body;
     const userId =  req.user.userId || req.body.userId;
+    console.log(ticketData)
     
     // const userId = req.body.userId || (req.user && req.user.userId);
     if (!userId) return res.status(401).json({ message: 'Missing userId or unauthenticated' });

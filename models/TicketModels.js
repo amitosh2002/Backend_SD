@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { CounterModel } from "./CounterModels.js";
+import { TicketConfig } from "./PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 
 // Improved slugify function
 function slugifyTitle(input) {
@@ -238,8 +239,19 @@ TicketSchema.pre("validate", async function assignSequenceAndKey(next) {
         // Generate ticket key (this.type is already uppercase)
         const sequence = String(this.sequenceNumber);
         const slugifiedTitle = slugifyTitle(this.title);
-        // 💡 FIX: Use this.type directly, as it's already uppercased.
-        this.ticketKey = `${this.type}-${sequence}-${slugifiedTitle}`; 
+        // 1. Fetch the project configuration
+        const ticketConfig = await TicketConfig.findOne({
+          projectId: this.projectId,
+        });
+
+        // 2. Find the convention object that matches the ticket type
+        const convention = ticketConfig?.conventions.find(c => c.id === this.type);
+
+        // 3. Extract the suffix (e.g., "BUG") or fallback to the type itself if not found
+        const suffix = convention?.suffix || this.type;
+
+        // 4. Construct the final key
+        this.ticketKey = `${suffix}-${sequence}-${slugifiedTitle}`; 
 
         return next();
     } catch (err) {
