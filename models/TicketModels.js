@@ -228,8 +228,10 @@ TicketSchema.pre("validate", async function assignSequenceAndKey(next) {
         // (due to the setter in the schema definition).
 
         // Get next sequence number for this ticket type
+        // Use a composite ID for the counter to ensure project-specific sequences
+        const counterId = `${this.projectId}_${this.type}`;
         const counter = await CounterModel.findByIdAndUpdate(
-            this.type, // Use the now-uppercased type as the ID
+            counterId,
             { $inc: { seq: 1 } },
             { new: true, upsert: true }
         );
@@ -278,7 +280,7 @@ TicketSchema.pre("save", function (next) {
 });
 
 // Index for better query performance
-TicketSchema.index({ type: 1, sequenceNumber: 1 }, { unique: true });
+TicketSchema.index({ projectId: 1, type: 1, sequenceNumber: 1 }, { unique: true });
 TicketSchema.index({ ticketKey: 1 }, { unique: true, sparse: true });
 TicketSchema.index({ status: 1, priority: 1 });
 TicketSchema.index({ assignee: 1, status: 1 });
@@ -288,13 +290,19 @@ TicketSchema.index({ assignee: 1, status: 1 });
 TicketSchema.index({ createdAt: -1 });
 
 // Static method to get next ticket key preview
-TicketSchema.statics.getNextTicketKey = async function (type, title) {
+TicketSchema.statics.getNextTicketKey = async function (projectId, type, title) {
   try {
-    const counter = await CounterModel.findById(type.toUpperCase());
+    const counterId = `${projectId}_${type.toUpperCase()}`;
+    const counter = await CounterModel.findById(counterId);
     const nextSeq = counter ? counter.seq + 1 : 1;
     const slugifiedTitle = slugifyTitle(title);
 
-    return `${type.toUpperCase()}-${nextSeq}-${slugifiedTitle}`;
+    // Fetch config to get the correct suffix
+    const ticketConfig = await TicketConfig.findOne({ projectId });
+    const convention = ticketConfig?.conventions.find(c => c.id === type.toUpperCase());
+    const suffix = convention?.suffix || type.toUpperCase();
+
+    return `${suffix}-${nextSeq}-${slugifiedTitle}`;
   } catch (error) {
     console.error("Error getting next ticket key:", error);
     throw error;

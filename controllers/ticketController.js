@@ -764,13 +764,13 @@ export const getTicketByKey = async (req, res) => {
 
 export const previewTicketKey = async (req, res) => {
   try {
-    const { type, title } = req.query;
-    if (!type || !title) {
+    const { type, title, projectId } = req.query;
+    if (!type || !title || !projectId) {
       return res
         .status(400)
-        .json({ message: "'type' and 'title' are required" });
+        .json({ message: "'type', 'title', and 'projectId' are required" });
     }
-    const key = await TicketModel.getNextTicketKey(type, title);
+    const key = await TicketModel.getNextTicketKey(projectId, type, title);
     return res.status(200).json({ key });
   } catch (err) {
     console.error("Error previewing ticket key:", err);
