@@ -58,23 +58,60 @@ const getFromEmail = () => {
 /* ---------------------------------- */
 /* Core Send Email (SINGLE ENTRY)     */
 /* ---------------------------------- */
+// const sendEmail = async (to, subject, text, html) => {
+//   try {
+//     const region = process.env.SMTP_REGION || "LOCAL";
+
+
+//     if (!getFromEmail) {
+//       throw new Error("MAIL_FROM / EMAIL_USER not configured");
+//     }
+
+//     console.log(
+//       `[sendEmail] region=${region} | to=${to} | subject=${subject}`
+//     );
+
+//     const mailOptions = {
+//       from: `${getFromEmail}`,
+//       // from: `"Hora" <${getFromEmail}>`,
+
+//       to,
+//       subject,
+//       text,
+//       html,
+//     };
+
+//     const result = await transporter.sendMail(mailOptions);
+
+//     console.log(
+//       `[sendEmail] SUCCESS | provider=${region} | messageId=${result.messageId}`
+//     );
+
+//     return {
+//       success: true,
+//       messageId: result.messageId,
+//       provider: region,
+//     };
+//   } catch (error) {
+//     console.error("[sendEmail] FAILED:", error);
+//     return { success: false, error: error.message };
+//   }
+// };
 const sendEmail = async (to, subject, text, html) => {
   try {
     const region = process.env.SMTP_REGION || "LOCAL";
+    const fromEmail = getFromEmail();
 
-
-    if (!getFromEmail) {
+    if (!fromEmail) {
       throw new Error("MAIL_FROM / EMAIL_USER not configured");
     }
 
     console.log(
-      `[sendEmail] region=${region} | to=${to} | subject=${subject}`
+      `[sendEmail] region=${region} | from=${fromEmail} | to=${to} | subject=${subject}`
     );
 
     const mailOptions = {
-      from: `${getFromEmail}`,
-      // from: `"Hora" <${getFromEmail}>`,
-
+      from: fromEmail, // ✅ CORRECT
       to,
       subject,
       text,
