@@ -3,11 +3,11 @@ name: CI Build
 on:
   pull_request:
     branches:
-      - main
+      - stagging
       - develop
   push:
     branches:
-      - main
+      - stagging
       - develop
 
 jobs:
