@@ -1,4 +1,10 @@
+import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js";
+import { TicketModel } from "../models/TicketModels.js";
+import SprintBoardConfig from "../models/PlatformModel/SprintModels/confrigurator/sprintBoardModel.js"
+import ScrumProjectFlow from "../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js"
+
 export function getWeekNumber(date) {
+
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   // Set to nearest Thursday: current date + 4 - current day number (0=Sun, 1=Mon, etc.)
   d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
@@ -173,3 +179,508 @@ export function analyzeCurrentWeekAndMonthLogs(allTimeLogs) {
       return "Admin"
     }
   }
+
+
+
+/**
+ * Close active sprint & activate next sprint
+ * @param {String} projectId
+ * @param {String} partnerId
+ */
+export const closeSprintAndActivateNext = async (
+  projectId,
+  partnerId
+) => {
+  const session = await partnerSprint.startSession();
+  session.startTransaction();
+
+  try {
+    // 1️⃣ Find active sprint
+    const activeSprint = await partnerSprint.findOne({
+      projectId,
+      partnerId,
+      isActive: true,
+    }).session(session);
+
+    if (!activeSprint) {
+      await session.abortTransaction();
+      session.endSession();
+      return {
+        success: false,
+        message: "No active sprint found",
+      };
+    }
+
+    // 2️⃣ Close active sprint
+    activeSprint.isActive = false;
+    await activeSprint.save({ session });
+
+    // 3️⃣ Find next sprint (by sprintNumber)
+    const nextSprint = await partnerSprint.findOne({
+      projectId,
+      partnerId,
+      sprintNumber: activeSprint.sprintNumber + 1,
+    }).session(session);
+
+    // 4️⃣ Activate next sprint (if exists)
+    if (nextSprint) {
+      nextSprint.isActive = true;
+      await nextSprint.save({ session });
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return {
+      success: true,
+      closedSprint: activeSprint.sprintName,
+      activatedSprint: nextSprint ? nextSprint.sprintName : null,
+    };
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+
+    throw error;
+  }
+};
+
+
+
+export const getSprintContext = async (projectId) => {
+  const current = await partnerSprint.findOne({
+    projectId,
+    isActive: true,
+  });
+
+  if (!current) return null;
+
+  const previous = await partnerSprint.findOne({
+    projectId,
+    sprintNumber: current.sprintNumber - 1,
+  });
+
+  const next = await partnerSprint.findOne({
+    projectId,
+    sprintNumber: current.sprintNumber + 1,
+  });
+
+  return { current, previous, next };
+};
+
+
+export const getAppSprintAnalytics = async (sprintId) => {
+  try {
+    if (!sprintId) {
+      throw new Error("Sprint ID required");
+    }
+
+    // Fetch sprint detail
+    const sprint = await partnerSprint.findOne({id:sprintId}).lean();
+    if (!sprint) {
+      throw new Error("Sprint not found");
+    }
+
+    // Fetch tasks associated with the sprint's project
+    const tasks = await TicketModel.find({ projectId: sprint.projectId }).lean();
+    if (!tasks || tasks.length === 0) {
+      throw new Error("No associated work found for the sprint");
+    }
+
+    // Initialize counters
+    let totalStoryPoint = 0;
+    let completedStoryPoint = 0;
+    let totalTaskInSprint = tasks.length;
+    let completedTaskInSprint = 0;
+    let totalOpenTaskInSprint = 0;
+    let totalInProgressTaskInSprint = 0;
+    let resolvedTaskInSprint = 0;
+    let totalClosedTaskInSprint = 0;
+    let totalTicketInTestingInSprint = 0;
+
+    tasks.forEach((task) => {
+      const estimate = task.estimatePoints || 0;
+      totalStoryPoint += estimate;
+
+      switch (task?.status) {
+        case "OPEN":
+          totalOpenTaskInSprint += 1;
+          break;
+        case "IN_PROGRESS":
+          totalInProgressTaskInSprint += 1;
+          break;
+        case "RESOLVED":
+          resolvedTaskInSprint += 1;
+          break;
+        case "CLOSED":
+          totalClosedTaskInSprint += 1;
+          completedStoryPoint += estimate;
+          completedTaskInSprint += 1;
+          break;
+      }
+
+      if (task.status && task.status.includes("TESTING")) {
+        totalTicketInTestingInSprint += 1;
+      }
+    });
+
+    const taskCompletionPercent = totalTaskInSprint > 0 ? (completedTaskInSprint / totalTaskInSprint) * 100 : 0;
+const avgStoryPointPerTask = totalTaskInSprint > 0 ? totalStoryPoint / totalTaskInSprint : 0;
+const daysRemaining = Math.ceil((sprint.endDate - new Date()) / (1000 * 60 * 60 * 24));
+
+
+    const remainingStoryPoint = totalStoryPoint - completedStoryPoint;
+    const velocityPercent = totalStoryPoint > 0 ? (completedStoryPoint / totalStoryPoint) * 100 : 0;
+    // Prepare result
+    const sprintAnalytics = {
+      sprintId,
+      totalStoryPoint,
+      velocityPercent: velocityPercent.toFixed(2),
+      completedStoryPoint,
+      remainingStoryPoint,
+      totalTaskInSprint,
+      completedTaskInSprint,
+      totalOpenTaskInSprint,
+      totalInProgressTaskInSprint,
+      resolvedTaskInSprint,
+      totalClosedTaskInSprint,
+      totalTicketInTestingInSprint,
+      taskCompletionPercent: taskCompletionPercent.toFixed(2),
+      avgStoryPointPerTask: avgStoryPointPerTask.toFixed(2),
+      daysRemaining,
+    };
+
+    return sprintAnalytics;
+  } catch (error) {
+    console.error("Error in getAppSprintAnalytics:", error.message);
+    throw error;
+  }
+};
+
+
+export const validateScrumFlow = (columns) => {
+  const statusSet = new Set();
+
+  for (const column of columns) {
+    if (!column.statusKeys || column.statusKeys.length === 0) {
+      throw new Error(`Column "${column.name}" has no statuses`);
+    }
+
+    for (const status of column.statusKeys) {
+      if (statusSet.has(status)) {
+        throw new Error(`Status "${status}" mapped multiple times`);
+      }
+      statusSet.add(status);
+    }
+  }
+
+  return true;
+
+
+  /// use validateScrumFlow(columns);
+
+};
+
+
+import { v4 as uuidv4 } from "uuid";
+import User from "../models/UserModel.js";
+
+/**
+ * Shared default columns
+ * Single source of truth
+ */
+const DEFAULT_COLUMNS = [
+  {
+    id: "col_1",
+    name: "To Do",
+    statusKeys: ["OPEN", "IN_PROGRESS"],
+    color: "#3b82f6",
+    wipLimit: null,
+    order: 1,
+  },
+  {
+    id: "col_2",
+    name: "In Progress",
+    statusKeys: ["IN_PROGRESS", "IN_REVIEW", "OPEN"],
+    color: "#f59e0b",
+    wipLimit: 5,
+    order: 2,
+  },
+  {
+    id: "col_3",
+    name: "In Review",
+    statusKeys: ["IN_REVIEW", "IN_PROGRESS", "OPEN"],
+    color: "#6366f1",
+    wipLimit: null,
+    order: 3,
+  },
+  {
+    id: "col_4",
+    name: "Done",
+    statusKeys: ["CLOSED", "OPEN"],
+    color: "#10b981",
+    wipLimit: null,
+    order: 4,
+  },
+];
+
+/**
+ * Normalize columns for Sprint Board
+ */
+function mapColumnsForBoard(columns) {
+  return columns.map((col) => ({
+    columnId: col.id,
+    name: col.name,
+    statusKeys: col.statusKeys,
+    color: col.color,
+    wipLimit: col.wipLimit,
+    order: col.order,
+  }));
+}
+
+/**
+ * Normalize columns for Flow
+ */
+function mapColumnsForFlow(columns) {
+  return columns.map((col) => ({
+    id: col.id,
+    name: col.name,
+    statusKeys: col.statusKeys,
+    color: col.color,
+    wipLimit: col.wipLimit,
+    order: col.order,
+  }));
+}
+
+/**
+ * Auto-create default Sprint Board + Scrum Flow
+ * Safe to call multiple times
+ */
+export async function autoCreateDefaultBoardAndFlow({
+  projectId,
+  userId,
+  workflowSource = "PROJECT",
+}) {
+  if (!projectId) {
+    throw new Error("projectId is required");
+  }
+
+  console.log("🚀 Auto creating board & flow for project:", projectId);
+
+  /* -------------------------------------------------
+   * 1️⃣ Sprint Board
+   * ------------------------------------------------- */
+  let board = await SprintBoardConfig.findOne({
+    projectId,
+    isActive: true,
+  });
+
+  if (!board) {
+    board = await SprintBoardConfig.create({
+      projectId,
+      boardName: "Sprint Board",
+      columns: mapColumnsForBoard(DEFAULT_COLUMNS),
+      workflowSource,
+      isActive: true,
+      createdBy: userId,
+      updatedBy: userId,
+    });
+
+    console.log("✅ Sprint Board created");
+  } else {
+    console.log("ℹ️ Sprint Board already exists");
+  }
+
+  /* -------------------------------------------------
+   * 2️⃣ Scrum Project Flow
+   * ------------------------------------------------- */
+  let flow = await ScrumProjectFlow.findOne({
+    projectId,
+    isActive: true,
+  });
+
+  if (!flow) {
+    flow = await ScrumProjectFlow.create({
+      id: uuidv4(),
+      projectId,
+      flowName: "Default Scrum Flow",
+      columns: mapColumnsForFlow(DEFAULT_COLUMNS),
+      sourceType: workflowSource,
+      importedFromFlowId: null,
+      isActive: true,
+      createdBy: userId,
+      updatedBy: userId,
+    });
+
+    console.log("✅ Scrum Project Flow created");
+  } else {
+    console.log("ℹ️ Scrum Project Flow already exists");
+  }
+
+  return { board, flow };
+}
+
+
+
+// utility function for normalize the flow for dropdown
+
+/**
+ * Converts ScrumProjectFlow → Dropdown config
+ */
+export const buildDropdownConfigFromFlow = (flow) => {
+  if (!flow || !Array.isArray(flow.columns)) {
+    return {
+      ticketTypes: [],
+      statusColors: {},
+      statusWorkflow: {},
+    };
+  }
+
+  // 1️⃣ Sort columns by order
+  const sortedColumns = [...flow.columns].sort(
+    (a, b) => a.order - b.order
+  );
+
+  const ticketTypesSet = new Set();
+  const statusColors = {};
+  const statusWorkflow = {};
+
+  // Map each status to the index of its FIRST column occurrence.
+  // If a status appears in multiple columns this is ambiguous and likely a data issue;
+  // we'll prefer the first occurrence but log a warning so the data can be corrected.
+  const statusToColIndex = {};
+  const duplicates = [];
+
+  // 2️⃣ Collect all statuses + colors and build first-occurrence index
+  sortedColumns.forEach((column, colIndex) => {
+    (column.statusKeys || []).forEach((status) => {
+      ticketTypesSet.add(status);
+
+      if (statusToColIndex[status] === undefined) {
+        statusToColIndex[status] = colIndex;
+      } else if (!duplicates.includes(status)) {
+        duplicates.push(status);
+      }
+
+      if (!statusColors[status]) {
+        statusColors[status] = {
+          bg: `${column.color}22`, // soft background
+          text: column.color,
+          border: column.color,
+        };
+      }
+    });
+  });
+
+  if (duplicates.length > 0) {
+    console.warn(
+      "buildDropdownConfigFromFlow: duplicate status mapping found (status appears in multiple columns).\nPlease ensure each status is mapped to exactly one column for predictable workflow transitions.",
+      duplicates
+    );
+  }
+
+  // Precompute column -> statuses array for quick lookup
+  const columnsStatuses = sortedColumns.map((c) => c.statusKeys || []);
+
+  // 3️⃣ Build workflow transitions using the first column where a status appears
+  for (const status of ticketTypesSet) {
+    const colIndex = statusToColIndex[status];
+    const sameColumnStatuses = columnsStatuses[colIndex] || [];
+    const nextColumnStatuses = columnsStatuses[colIndex + 1] || [];
+
+    statusWorkflow[status] = Array.from(
+      new Set([...sameColumnStatuses, ...nextColumnStatuses])
+    ).filter((s) => s !== status);
+  }
+
+  return {
+    ticketFlowTypes: Array.from(ticketTypesSet),
+    statusColors,
+    statusWorkflow,
+  };
+};
+
+
+export const normalizeSprintView = ({ board, flow }) => {
+  /**
+   * Priority:
+   * 1. Project Board
+   * 2. Project Flow
+   * 3. Template Board
+   * 4. Template Flow
+   */
+
+  if (board) {
+    return {
+      source: "BOARD",
+      id: board.id,
+      name: board.boardName,
+      columns: board.columns,
+      statusWorkflow: board.statusWorkflow,
+      statusColors: board.statusColors,
+      ticketFlowTypes: board.ticketFlowTypes,
+      editable: true,
+    };
+  }
+
+  if (flow) {
+    const columns = flow.ticketFlowTypes.map((status, index) => ({
+      columnId: `flow_col_${index + 1}`,
+      name: status.replaceAll("_", " "),
+      statusKeys: [status],
+      color: flow.statusColors?.[status]?.text || "#64748b",
+      wipLimit: null,
+      order: index + 1,
+    }));
+
+    return {
+      source: "FLOW",
+      id: flow.flowId,
+      name: flow.flowName,
+      columns,
+      statusWorkflow: flow.statusWorkflow,
+      statusColors: flow.statusColors,
+      ticketFlowTypes: flow.ticketFlowTypes,
+      editable: true,
+    };
+  }
+
+  return null;
+};
+
+
+export const getUserDetailById=async(id)=>{
+  try {
+    if (!id) {
+    // throw new error;
+    console.log("No ID provided");
+    }
+    let userDetails = await User.findById(id);
+    return {
+        name: `${userDetails?.profile?.firstName ?? ''} ${userDetails?.profile?.lastName ?? ''}`.trim(),
+        email:userDetails.email
+    }
+  } catch (error) {
+    // throw new error;// foir updated db uri
+    return {
+        name: "",
+        email:""
+    }
+  }
+}
+
+
+// 1. Helper function to extract, flatten, and unique-ify by ID 
+export const getCleanUniqueItems = (configArray, key, fields) => {
+  // Flatten the nested arrays from all projects
+  const allItems = configArray.flatMap(item => item[key] || []);
+  
+  // Use a Map to ensure uniqueness by 'id'
+  const uniqueMap = new Map(allItems.map(item => [item.id, item]));
+  
+  // Convert back to array and "Pick" only the specific fields requested
+  return Array.from(uniqueMap.values()).map(item => {
+    const picked = {};
+    fields.forEach(field => picked[field] = item[field]);
+    return picked;
+  });
+};

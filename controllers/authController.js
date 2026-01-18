@@ -7,6 +7,7 @@ import {
   sendPasswordResetOTP,
 } from "../services/emailService.js";
 import { UserWorkAccess } from "../models/PlatformModel/UserWorkAccessModel.js";
+import resend from "../utility/resendUtil.js";
 
 // Generate JWT token
 const generateToken = (userId, role) => {
@@ -297,6 +298,22 @@ const sendLoginOTP = async (req, res) => {
         },
         otpCode
       );
+
+    //   const res=   await resend.emails.send({
+    //   from: "Hora <onboarding@resend.dev>", // ✅ works without domain
+    //   to: email,
+    //   subject: "Account Verification OTP",
+    //   html: `
+    //     <div style="font-family: Arial, sans-serif">
+    //       <h2>Verify your account</h2>
+    //       <p>Your OTP is:</p>
+    //       <h1>${otpCode}</h1>
+    //       <p>This OTP expires in 10 minutes.</p>
+    //     </div>
+    //   `,
+    // });
+
+
     } catch (emailError) {
       console.error("Failed to send OTP email:", emailError);
       return res.status(500).json({

@@ -196,6 +196,7 @@ const userSchema = new mongoose.Schema(
         return !this.googleId; // phone optional for Google users
       },
       unique: true,
+      sparse: true,
       match: [/^[0-9]{10}$/, "Please enter a valid 10-digit phone number"],
     },
 

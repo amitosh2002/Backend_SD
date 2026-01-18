@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { CounterModel } from "./CounterModels.js";
+import { TicketConfig } from "./PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 
 // Improved slugify function
 function slugifyTitle(input) {
@@ -29,20 +30,6 @@ const TICKET_TYPES = [
   "LIVEOPS",
   "PLAT",
 ];
-const ENUMS =[
-  "OPEN",
-    "IN_PROGRESS",
-    "IN_REVIEW",
-    "DEV_TESTING",
-    "RESOLVED",
-    "M1 TESTING COMPLETED",
-    "M2 TESTING COMPLETED",
-    "REJECTED",
-    "ON_HOLD",
-    "REOPENED",
-    "CLOSED",
-     null 
-]
 
 const TicketSchema = new mongoose.Schema(
   {
@@ -73,10 +60,10 @@ const TicketSchema = new mongoose.Schema(
     
     set: (val) => val ? val.toUpperCase() : val, 
     
-    enum: {
-        values: TICKET_TYPES,
-        message: "Invalid ticket type. Must be one of: {VALUE}",
-    },
+    // enum: {
+    //     values: TICKET_TYPES,
+    //     message: "Invalid ticket type. Must be one of: {VALUE}",
+    // },
 },
     sequenceNumber: {
       type: Number,
@@ -92,23 +79,14 @@ const TicketSchema = new mongoose.Schema(
       index: true,
     },
     priority: {
-      type: String,
-      required: false,
-      trim: true,
-      enum: {
-        values: ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
-        message: "Priority must be LOW, MEDIUM, HIGH, or CRITICAL",
+      type: [String],   // array of label IDs
+        default: [],
+        index: true
       },
-      default: "MEDIUM",
-    },
     status: {
       type: String,
       required: false,
       trim: true,
-      enum: {
-        values:ENUMS,
-        message: "Invalid status",
-      },
       default: "OPEN",
     },
       description: {
@@ -125,8 +103,8 @@ const TicketSchema = new mongoose.Schema(
       required: false,
       trim: true,
     },
-    branch: {
-      type: {
+    githubBranches: [
+      {
         name: { type: String, trim: true },
         url: { type: String, trim: true },
         status: {
@@ -134,9 +112,9 @@ const TicketSchema = new mongoose.Schema(
           enum: ["CREATED", "MERGED", "DELETED"],
           default: "CREATED",
         },
-      },
-      required: false,
-    },
+        createdAt: { type: Date, default: Date.now }
+      }
+    ],
     totalTimeLogged: {
         type: Number,
         default: 0,
@@ -187,13 +165,13 @@ const TicketSchema = new mongoose.Schema(
         timestamp: { type: Date, default: Date.now },
       },
     ],
-    labels: [
-      {
-        type: String,
-        trim: true,
-      },
-    ],
-    dueDate: {
+      labels: {
+        type: [String],   // array of label IDs
+        default: [],
+        index: true
+      }
+      ,
+          dueDate: {
       type: Date,
       required: false,
     },
@@ -201,6 +179,16 @@ const TicketSchema = new mongoose.Schema(
       type: Number,
       required: false,
       min: [0, "Estimated hours cannot be negative"],
+    },
+    eta: {
+      type: Date,
+      required: false,
+    },
+    sprint: {
+      type: String,
+      required: false,
+      ref:"PartnerSprint",
+      default:null
     },
   },
   {
@@ -240,8 +228,10 @@ TicketSchema.pre("validate", async function assignSequenceAndKey(next) {
         // (due to the setter in the schema definition).
 
         // Get next sequence number for this ticket type
+        // Use a composite ID for the counter to ensure project-specific sequences
+        const counterId = `${this.projectId}_${this.type}`;
         const counter = await CounterModel.findByIdAndUpdate(
-            this.type, // Use the now-uppercased type as the ID
+            counterId,
             { $inc: { seq: 1 } },
             { new: true, upsert: true }
         );
@@ -251,8 +241,19 @@ TicketSchema.pre("validate", async function assignSequenceAndKey(next) {
         // Generate ticket key (this.type is already uppercase)
         const sequence = String(this.sequenceNumber);
         const slugifiedTitle = slugifyTitle(this.title);
-        // 💡 FIX: Use this.type directly, as it's already uppercased.
-        this.ticketKey = `${this.type}-${sequence}-${slugifiedTitle}`; 
+        // 1. Fetch the project configuration
+        const ticketConfig = await TicketConfig.findOne({
+          projectId: this.projectId,
+        });
+
+        // 2. Find the convention object that matches the ticket type
+        const convention = ticketConfig?.conventions.find(c => c.id === this.type);
+
+        // 3. Extract the suffix (e.g., "BUG") or fallback to the type itself if not found
+        const suffix = convention?.suffix || this.type;
+
+        // 4. Construct the final key
+        this.ticketKey = `${suffix}-${sequence}-${slugifiedTitle}`; 
 
         return next();
     } catch (err) {
@@ -279,7 +280,7 @@ TicketSchema.pre("save", function (next) {
 });
 
 // Index for better query performance
-TicketSchema.index({ type: 1, sequenceNumber: 1 }, { unique: true });
+TicketSchema.index({ projectId: 1, type: 1, sequenceNumber: 1 }, { unique: true });
 TicketSchema.index({ ticketKey: 1 }, { unique: true, sparse: true });
 TicketSchema.index({ status: 1, priority: 1 });
 TicketSchema.index({ assignee: 1, status: 1 });
@@ -289,13 +290,19 @@ TicketSchema.index({ assignee: 1, status: 1 });
 TicketSchema.index({ createdAt: -1 });
 
 // Static method to get next ticket key preview
-TicketSchema.statics.getNextTicketKey = async function (type, title) {
+TicketSchema.statics.getNextTicketKey = async function (projectId, type, title) {
   try {
-    const counter = await CounterModel.findById(type.toUpperCase());
+    const counterId = `${projectId}_${type.toUpperCase()}`;
+    const counter = await CounterModel.findById(counterId);
     const nextSeq = counter ? counter.seq + 1 : 1;
     const slugifiedTitle = slugifyTitle(title);
 
-    return `${type.toUpperCase()}-${nextSeq}-${slugifiedTitle}`;
+    // Fetch config to get the correct suffix
+    const ticketConfig = await TicketConfig.findOne({ projectId });
+    const convention = ticketConfig?.conventions.find(c => c.id === type.toUpperCase());
+    const suffix = convention?.suffix || type.toUpperCase();
+
+    return `${suffix}-${nextSeq}-${slugifiedTitle}`;
   } catch (error) {
     console.error("Error getting next ticket key:", error);
     throw error;
