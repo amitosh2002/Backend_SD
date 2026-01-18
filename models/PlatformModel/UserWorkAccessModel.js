@@ -11,6 +11,7 @@ const UserWorkAccessSchema = new mongoose.Schema({
   },
   projectId: {
     type: String,
+    ref:'Projects'
   },
   accessType: {
     type: Number,

@@ -13,6 +13,7 @@ import User from "../../models/UserModel.js";
 import { sendInvitationEmail } from "../../services/emailService.js";
 import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getUserDetailById } from "../../utility/platformUtility.js";
 import { TicketModel } from "../../models/TicketModels.js";
+import { TicketConfig } from "../../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 
 // import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
@@ -966,3 +967,59 @@ export const getUserAnalyticsAgg = async (req, res) => {
   }
 };
 
+
+
+
+export const ticketConfigurator = async (req, res) => {
+  const { projectId } = req.params;
+  const { type, data } = req.body; 
+
+  try {
+    // take update query
+    const updateQuery = {};
+    
+    // Only set the update if data is provided
+    if (type && data) {
+      updateQuery[type] = data;
+    }
+    // validate the ticket 
+    const ticket=await TicketModel.find({projectId:projectId});
+
+    if(!ticket){
+      return res.status(404).json({msg:"Ticket not found"})
+    }
+    // update the ticket configuration for the project if not found it create a record 
+    const updatedProject = await TicketConfig.findOneAndUpdate(
+      { projectId: ticket?.projectId || projectId },
+      { $set: updateQuery,
+        projectId:ticket?.projectId
+       },
+      { new: true, upsert: true, }
+    );
+
+    // Logic: If type exists, return only that key. Otherwise, return all.
+    const responseData = {
+      success: true, // Fixed typo
+    };
+
+    if (type) {
+      // Return only the specific requested array
+      // e.g., if type is 'labels', response is { success: true, labels: [...] }
+      responseData[type] = updatedProject[type];
+    } else {
+      // Return everything if type is null/undefined/empty
+      responseData.labels = updatedProject.labels;
+      responseData.priorities = updatedProject.priorities;
+      responseData.conventions = updatedProject.conventions;
+    }
+
+    res.status(200).json(responseData);
+
+  } catch (error) {
+    console.error("Config Error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to update or fetch project configuration" 
+    });
+  }
+};

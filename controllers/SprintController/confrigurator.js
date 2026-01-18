@@ -245,9 +245,6 @@ export const importFlowFor = async (req, res) => {
 export const getScrumFlowForProject = async (req, res) => {
   try {
     const { projectId } = req.body;
-
-    console.log("[ScrumFlow] Fetching flow for project:", projectId);
-
     // 1️⃣ Project-specific flow
     let flow = await ScrumProjectFlow.findOne({
       projectId,
@@ -256,7 +253,6 @@ export const getScrumFlowForProject = async (req, res) => {
     }).lean();
     // 2️⃣ Fallback to TEMPLATE
     if (!flow) {
-      console.log("[ScrumFlow] Using TEMPLATE flow");
       flow = await ScrumProjectFlow.findOne({
         projectId: "DEFAULT",
         isActive: true,
@@ -302,11 +298,6 @@ export const getScrumFlowForProject = async (req, res) => {
       wipLimit: null,
       order: idx + 1,
     }))
-
-
-
-
-    console.log(columns,"columns")
 
     // 4️⃣ Generate statusColors & statusWorkflow
 // 4️⃣ Generate statusColors & statusWorkflow
@@ -376,9 +367,6 @@ columns.forEach((col, index) => {
 export const getSprintBoardForProject = async (req, res) => {
   try {
     const { projectId } = req.body;
-
-    console.log("[SprintBoard] Fetching board for project:", projectId);
-
     // 1️⃣ Project board
     let board = await SprintBoardConfigSchema.findOne({
       projectId,
@@ -388,7 +376,6 @@ export const getSprintBoardForProject = async (req, res) => {
 
     // 2️⃣ Fallback to TEMPLATE
     if (!board) {
-      console.log("[SprintBoard] Using TEMPLATE board");
       board = await SprintBoardConfigSchema.findOne({
         projectId: "DEFAULT",
         isActive: true,
@@ -460,7 +447,6 @@ export const UpdateSprintFlowForProject = async (req, res) => {
     const userId = req.user.userId;
     const { projectId, flowBody } = req.body;
     const { columns, name } = flowBody;
-    console.log(flowBody)
 
     // 1. Verify Access
     const hasAccess = await UserWorkAccess.exists({

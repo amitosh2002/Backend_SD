@@ -6,7 +6,10 @@ import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js";
 import ActivityLog from "../models/PlatformModel/ActivityLogModel.js";
 import { LogActionType, LogEntityType } from "../models/PlatformModel/Enums/ActivityLogEnum.js";
-import { getUserDetailById } from "../utility/platformUtility.js";
+import { getCleanUniqueItems, getUserDetailById } from "../utility/platformUtility.js";
+import ScrumProjectFlow from "../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
+import { TicketConfig } from "../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
+import { config } from "dotenv";
 
 export const createTicket = async (req, res) => {
   try {
@@ -53,6 +56,7 @@ export const createTicketV2 = async (req, res) => {
   try {
     const ticketData = req.body;
     const userId =  req.user.userId || req.body.userId;
+    console.log(ticketData)
     
     // const userId = req.body.userId || (req.user && req.user.userId);
     if (!userId) return res.status(401).json({ message: 'Missing userId or unauthenticated' });
@@ -171,166 +175,234 @@ export const createTicketV2 = async (req, res) => {
 };
 
 
+
 export const listTickets = async (req, res) => {
   try {
     const {
       page = 1,
       limit = 20,
-      type, // Not used in filters yet, but kept for future use
       status,
-      priority,
       assignee,
+      project,
       reporter,
-      projectId,
+      labels,
+      priority,
+      ticketConvention, // maps to TicketModel.type
+      sort = "updatedAt",
+      sprint,
       partnerId,
     } = req.query;
+
     const userId = req.user.userId;
-    const numericLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 200);
-    const numericPage = Math.max(parseInt(page, 10) || 1, 1);
 
-    // Step 1: Find accepted access
-    // Note: Assuming UserWorkAccess model and connection are available globally.
-    const userAccessList = await UserWorkAccess.find({
-      userId,
-      status: "accepted",
-    }).lean();
+    const numericLimit = Math.min(Math.max(+limit || 20, 1), 200);
+    const numericPage = Math.max(+page || 1, 1);
 
-    // Step 2: Extract and normalize IDs to strings
-    const allowedProjectIds = userAccessList
-      .map((a) => String(a.projectId))
-      .filter(Boolean);
-    const allowedPartnerIds = userAccessList
-      .map((a) => String(a.partnerId))
-      .filter(Boolean);
+    /* ---------------------------------------------
+       1️⃣ Fetch user access (lean + projection)
+    --------------------------------------------- */
+    const accessList = await UserWorkAccess.find(
+      { userId, status: "accepted" },
+      { projectId: 1, partnerId: 1 }
+    ).lean();
 
-    // CRITICAL ACCESS CHECK: If the user has no accepted access, they shouldn't see anything.
-    if (allowedProjectIds.length === 0 && allowedPartnerIds.length === 0) {
-        return res.status(200).json({
-            page: numericPage,
-            limit: numericLimit,
-            total: 0,
-            items: [],
-            accessibleProjects: [],
-            accessiblePartners: [],
-        });
+    if (!accessList.length) {
+      return res.status(200).json({
+        page: numericPage,
+        limit: numericLimit,
+        total: 0,
+        items: [],
+        accessibleProjects: [],
+        accessiblePartners: [],
+      });
     }
 
-    // Step 3: Build filters
+    const allowedProjectIds = new Set(
+      accessList.map(a => String(a.projectId)).filter(Boolean)
+    );
+
+    const allowedPartnerIds = new Set(
+      accessList.map(a => String(a.partnerId)).filter(Boolean)
+    );
+
+    /* ---------------------------------------------
+       2️⃣ Helpers
+    --------------------------------------------- */
+    const buildInQuery = (val) => {
+      if (!val) return undefined;
+      if (Array.isArray(val)) return { $in: val };
+      if (typeof val === "string" && val.includes(",")) {
+        return { $in: val.split(",").map(v => v.trim()) };
+      }
+      return val;
+    };
+
+    const normalizeProjectIds = (ids) =>
+      ids.map(id =>
+        mongoose.Types.ObjectId.isValid(id) && id.length === 24
+          ? new mongoose.Types.ObjectId(id)
+          : id
+      );
+
+    /* ---------------------------------------------
+       3️⃣ Build Filters
+    --------------------------------------------- */
     const filters = {};
 
-    if (status) filters.status = status;
+    if (status) filters.status = buildInQuery(status);
     if (priority) filters.priority = priority;
-    if (assignee) filters.assignee = assignee;
+    if (assignee) filters.assignee = buildInQuery(assignee);
     if (reporter) filters.reporter = reporter;
 
-    // --- 🔹 Project Filter (Handles mixed UUID/ObjectId) ---
-    const projectIdString = projectId ? String(projectId) : null;
-
-    if (projectIdString) {
-      if (!allowedProjectIds.includes(projectIdString)) {
-        return res
-          .status(403)
-          .json({ message: "Access denied: no permission for this project." });
-      }
-
-      // Check for ObjectId format to handle legacy/mixed IDs
-      if (projectIdString.length === 24 && mongoose.Types.ObjectId.isValid(projectIdString)) {
-        filters.projectId = new mongoose.Types.ObjectId(projectIdString);
+    // 🔹 Labels (array field → $in)
+    if (labels) {
+      const labelQuery = buildInQuery(labels);
+      if (labelQuery?.$in) {
+        filters.labels = { $in: labelQuery.$in };
       } else {
-        // Assume UUID string
-        filters.projectId = projectIdString;
+        filters.labels = labels;
       }
-      
-    } else if (allowedProjectIds.length > 0) {
-      // If no projectId is specified, filter by all allowed projects.
-      const mixedProjectIds = allowedProjectIds.map(id => {
-        if (id.length === 24 && mongoose.Types.ObjectId.isValid(id)) {
-          return new mongoose.Types.ObjectId(id);
-        }
-        return id; // Use as string (UUID)
-      });
+    }
+//     if (labels) {
+//   const labelQuery = buildInQuery(labels);
+//   const values = labelQuery?.$in ?? [labels];
+
+//   filters.$or = [
+//     { 'labels.id': { $in: values } },
+//     { 'labels.name': { $in: values } },
+//   ];
+// }
+
+
+    // 🔹 Ticket type / convention
+    if (ticketConvention) {
+      filters.type = buildInQuery(ticketConvention);
+    }
+
+    if (sprint) {
+      filters.sprint = buildInQuery(sprint);
+    }
+
+    /* ---------------------------------------------
+       4️⃣ Project Access Filter
+    --------------------------------------------- */
+    if (project) {
+      const requested = project.split(",").map(String);
+      const allowed = requested.filter(id =>
+        allowedProjectIds.has(id)
+      );
+
+      if (!allowed.length) {
+        return res.status(403).json({
+          message: "Access denied for selected project(s)",
+        });
+      }
 
       filters.projectId = {
-           $in: mixedProjectIds,
+        $in: normalizeProjectIds(allowed),
+      };
+    } else if (allowedProjectIds.size) {
+      filters.projectId = {
+        $in: normalizeProjectIds([...allowedProjectIds]),
       };
     }
-    // Note: If allowedProjectIds is empty, tickets are implicitly restricted by the partner filter below.
 
-    // --- 🔹 Partner Filter (UUIDs/Strings) ---
-    const partnerIdString = partnerId ? String(partnerId) : null;
-    
-    if (partnerIdString) {
-      if (!allowedPartnerIds.includes(partnerIdString)) {
-        return res
-          .status(403)
-          .json({ message: "Access denied: no permission for this partner." });
+    /* ---------------------------------------------
+       5️⃣ Partner Access Filter
+    --------------------------------------------- */
+    if (partnerId) {
+      if (!allowedPartnerIds.has(String(partnerId))) {
+        return res.status(403).json({
+          message: "Access denied for this partner",
+        });
       }
-      filters.partnerId = partnerIdString;
-    } else if (allowedPartnerIds.length > 0) {
-      // If no partnerId specified, filter by all allowed partners.
-      filters.partnerId = { $in: allowedPartnerIds };
+      filters.partnerId = String(partnerId);
+    } else if (allowedPartnerIds.size) {
+      filters.partnerId = { $in: [...allowedPartnerIds] };
     }
-    // Note: If allowedPartnerIds is empty, filters.partnerId will be undefined.
-    
-    // --- Access Validation Check ---
-    // If the user has access but neither project nor partner filtering criteria were met (highly unlikely 
-    // given the check at the top, but serves as a final safeguard)
-    // You might want to ensure AT LEAST ONE of filters.projectId or filters.partnerId is set if access list is non-empty.
 
-    // Step 4: Query tickets
+    /* ---------------------------------------------
+       6️⃣ Query (parallel + lean)
+    --------------------------------------------- */
+    const skip = (numericPage - 1) * numericLimit;
+
     const [items, total] = await Promise.all([
-            TicketModel.find(filters)
-              .sort({ createdAt: -1 })
-              .skip((numericPage - 1) * numericLimit)
-              .limit(numericLimit)
-              .lean(),
-            TicketModel.countDocuments(filters),
-          ]);
+      TicketModel.find(filters)
+        .sort({ [sort]: -1 })
+        .skip(skip)
+        .limit(numericLimit)
+        .lean(),
 
-          const sprintIds = items
-            .map(ticket => ticket.sprint)
-            .filter(Boolean);
-            console.log(sprintIds)
+      TicketModel.countDocuments(filters),
+    ]);
 
-          if (sprintIds.length) {
-            const sprints = await partnerSprint
-              .find({ id: { $in: sprintIds } })
-              .lean();
-            console.log(sprints)
-            const sprintMap = {};
-            sprints.forEach(sprint => {
-              sprintMap[sprint.id] = sprint;
-            });
+    /* ---------------------------------------------
+       7️⃣ Sprint name hydration (batched)
+    --------------------------------------------- */
+    const sprintIds = [...new Set(items.map(t => t.sprint).filter(Boolean))];
 
-            items.forEach(ticket => {
-              ticket.sprint = sprintMap[ticket.sprint]?.sprintName || "";
-            });
-          }
+    if (sprintIds.length) {
+      const sprints = await partnerSprint
+        .find({ id: { $in: sprintIds } }, { id: 1, sprintName: 1 })
+        .lean();
 
-    // Step 5: Return response
+      const sprintMap = Object.fromEntries(
+        sprints.map(s => [s.id, s.sprintName])
+      );
+
+ 
+    }
+
+    // updatinthe assigne details with name
+      await Promise.all(
+        items.map(async (ticket) => {
+          const user = await getUserDetailById(ticket?.assignee);
+          ticket.assignee = user?.name || "";
+          console.log(ticket.assignee)
+        })
+      );
+
+
+    /* ---------------------------------------------
+       8️⃣ Response
+    --------------------------------------------- */
     return res.status(200).json({
       page: numericPage,
       limit: numericLimit,
       total,
       items,
-      accessibleProjects: allowedProjectIds,
-      accessiblePartners: allowedPartnerIds,
+      accessibleProjects: [...allowedProjectIds],
+      accessiblePartners: [...allowedPartnerIds],
     });
-    
+
   } catch (err) {
     console.error("❌ Error listing tickets:", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
-
 export const getTicketById = async (req, res) => {
   try {
     const { id } = req.params;
-    const ticket = await TicketModel.findById(id);
-    if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+
+    // 1. Use .lean() to get a plain JS object (faster & mutable)
+    // 2. Use .populate if your schema allows it
+    const ticket = await TicketModel.findById(id).lean();
+
+    // 3. Early return if ticket doesn't exist
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+
+    // 4. Fetch user details only after confirming ticket exists
+    if (ticket.assignee) {
+      const user = await getUserDetailById(ticket.assignee);
+      // Now it's safe to replace the ID with the name
+      ticket.assignee = user?.name || "Unassigned";
+    }
+
     return res.status(200).json(ticket);
   } catch (err) {
-    console.error("Error getting ticket:", err);
+    console.error("Error getting ticket:", err); // Keep logging for debugging
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -535,11 +607,10 @@ export const setAssignee = async (req, res) => {
         }
 
         // --- Find Assignee Details ---
-        const assigneeDetails = await User.findById(userId);
 
-        if (!assigneeDetails) {
-            return res.status(404).json({ success: false, message: `User with ID ${userId} not found.` });
-        }
+        // if (!assigneeDetails) {
+        //     return res.status(404).json({ success: false, message: `User with ID ${userId} not found.` });
+        // }
 
         // 💡 FIX 2: Check the property on the User model. It's usually '_id' for reference.
         // Assuming your TicketModel 'assignee' field is of type { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
@@ -547,7 +618,7 @@ export const setAssignee = async (req, res) => {
             ticketId,
             { 
                 // 💡 CRITICAL FIX: Save the user's MongoDB ID for proper referencing/population
-                assignee: assigneeDetails.username 
+                assignee: userId 
             },
             { new: true, runValidators: true }
         );
@@ -581,34 +652,103 @@ export const setAssignee = async (req, res) => {
 
 export const setPriority = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { priority } = req.body;
-    const updated = await TicketModel.findByIdAndUpdate(
-      id,
-      { priority },
-      { new: true, runValidators: true }
+    const { id: ticketId } = req.params;
+    const { priorityId } = req.body;
+
+    if (!priorityId) {
+      return res.status(400).json({ message: "priorityId is required" });
+    }
+
+    // 1️⃣ Fetch ticket (minimal fields)
+    const ticket = await TicketModel.findById(ticketId)
+      .select("projectId priority")
+      .lean();
+
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+
+    // 2️⃣ Skip if already assigned
+    if (ticket.priority === priorityId) {
+      return res.status(200).json({ message: "Priority already assigned" });
+    }
+
+    // 3️⃣ Validate priority exists in TicketConfig
+    const project = await TicketConfig.findOne(
+      {
+        projectId: ticket.projectId,
+        "priorities.id": priorityId,
+      },
+      { "priorities.$": 1 }
+    ).lean();
+
+    if (!project || !project.priorities?.length) {
+      return res.status(404).json({
+        message: "Priority not found in project config",
+      });
+    }
+
+    // 4️⃣ Assign priority (store ONLY id)
+    const updatedTicket = await TicketModel.findByIdAndUpdate(
+      ticketId,
+      { priority: priorityId },
+      { new: true }
     );
-    if (!updated) return res.status(404).json({ message: "Ticket not found" });
-    return res.status(200).json(updated);
+
+    return res.status(200).json(updatedTicket);
+
   } catch (err) {
-    console.error("Error setting priority:", err);
+    console.error("❌ Error setting priority:", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
 
 export const addLabel = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { label } = req.body;
-    const updated = await TicketModel.findByIdAndUpdate(
-      id,
-      { $addToSet: { labels: label } },
-      { new: true, runValidators: true }
-    );
-    if (!updated) return res.status(404).json({ message: "Ticket not found" });
-    return res.status(200).json(updated);
+    const { id: ticketId } = req.params;
+    const { labelId } = req.body;
+
+    if (!labelId) {
+      return res.status(400).json({ message: "labelId is required" });
+    }
+
+    // 1️⃣ Fetch ticket (minimal fields)
+    const ticket = await TicketModel.findById(ticketId)
+      .select("projectId labels")
+      .lean();
+
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+
+    // 2️⃣ Prevent duplicate label (simple + fast)
+    if (ticket.labels?.includes(String(labelId))) {
+      return res.status(200).json({ message: "Label already assigned" });
+    }
+
+    // 3️⃣ Validate label belongs to this project
+    const labelExists = await TicketConfig.exists({
+      projectId: ticket.projectId,
+      "labels.id": labelId,
+    });
+
+    if (!labelExists) {
+      return res.status(404).json({
+        message: "Label not found for this project",
+      });
+    }
+
+    // 4️⃣ Add labelId only (no duplicates guaranteed)
+    const updatedTicket = await TicketModel.findByIdAndUpdate(
+      ticketId,
+      { $addToSet: { labels: String(labelId) } },
+      { new: true }
+    ).lean();
+
+    return res.status(200).json(updatedTicket);
+
   } catch (err) {
-    console.error("Error adding label:", err);
+    console.error("❌ Error adding label:", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -644,13 +784,13 @@ export const getTicketByKey = async (req, res) => {
 
 export const previewTicketKey = async (req, res) => {
   try {
-    const { type, title } = req.query;
-    if (!type || !title) {
+    const { type, title, projectId } = req.query;
+    if (!type || !title || !projectId) {
       return res
         .status(400)
-        .json({ message: "'type' and 'title' are required" });
+        .json({ message: "'type', 'title', and 'projectId' are required" });
     }
-    const key = await TicketModel.getNextTicketKey(type, title);
+    const key = await TicketModel.getNextTicketKey(projectId, type, title);
     return res.status(200).json({ key });
   } catch (err) {
     console.error("Error previewing ticket key:", err);
@@ -851,3 +991,54 @@ export const getWorkLogActivity = async (req, res) => {
     return res.status(500).json({ msg: "Something went wrong" });
   }
 };
+
+
+// this controller is for status values for filtering tickets
+export const getSortKeyValues= async (req,res)=>{
+
+  try {
+
+    const userId = req.user.userId;
+    const userWorkAccess = await UserWorkAccess.find({ userId: userId });
+
+    if (!userWorkAccess || userWorkAccess.length === 0) {
+      return res.status(404).json({ msg: "User not found" });
+    }
+    const projectIds = userWorkAccess.map(userWorkAccess => userWorkAccess.projectId);
+    const allWorkingUsers = await UserWorkAccess.find({ projectId: { $in: projectIds } });
+    const allUsers = await User.find({ _id: { $in: allWorkingUsers.map(allWorkingUsers => allWorkingUsers.userId) } }).select('_id profile email');
+    const workFLow = await ScrumProjectFlow.find({ projectId: { $in: projectIds } });
+    const wokFlowStatus =  workFLow.map(workFLow => workFLow.columns.map(columns => columns.name)).flat();
+    const uniqueStatus = [...new Set(wokFlowStatus)];
+    const uniqueUsers = [...new Set(allUsers)];
+    const projects = await ProjectModel.find({
+              projectId: { $in: projectIds }
+            }).select('projectId projectName').lean();
+
+    const ticketConfig= await TicketConfig.find({ projectId: { $in: projectIds } });
+    console.log(ticketConfig,"ticketConfig")
+    // const uniqueLabels = [...new Set(ticketConfig.map(ticketConfig => ticketConfig.labels.select("id color name")).flat())];
+    // const uniquePriority = [...new Set(ticketConfig.map(ticketConfig => ticketConfig.priorities).flat())];
+    // const uniqueTicketConvenstion = [...new Set(ticketConfig.map(ticketConfig => ticketConfig.conventions).flat())];
+const uniqueLabels = getCleanUniqueItems(ticketConfig, 'labels', ['id', 'name', 'color']);
+
+const uniquePriority = getCleanUniqueItems(ticketConfig, 'priorities', ['id', 'name', 'color']);
+
+const uniqueTicketConvention = getCleanUniqueItems(ticketConfig, 'conventions', ['id',  'color', 'suffix']);
+
+    return res.status(200).json({
+      success: true,
+      users: uniqueUsers,
+      status: uniqueStatus,
+      projects: projects,
+      labels: uniqueLabels,
+      priority: uniquePriority,
+      ticketConvention: uniqueTicketConvention,
+      msg: "Success fetch sort key values",
+    });
+  } catch (error) {
+    console.error("getSortKeyValues error:", error);
+    return res.status(500).json({ msg: "Something went wrong" });
+  }
+
+}
