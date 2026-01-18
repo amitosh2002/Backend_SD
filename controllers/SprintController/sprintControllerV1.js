@@ -1,6 +1,7 @@
 // import PartnerSprint from "../models/partnerSprint.model.js";
 
 import ActivityLog from "../../models/PlatformModel/ActivityLogModel.js";
+import { LogActionType, LogEntityType } from "../../models/PlatformModel/Enums/ActivityLogEnum.js";
 import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import partnerSprint from "../../models/PlatformModel/SprintModels/partnerSprint.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
@@ -353,7 +354,7 @@ export const assignSprintToProjectTicket = async (req, res) => {
         projectId:project.projectId,
         actionType:LogActionType.SPRINT_UPDATE,
         targetType:LogEntityType.SPRINT,
-        targetId:updatedTicket.id ?? project._id,
+        targetId:ticketId?? project._id,
         changes:{
           newValue:sprint.sprintName,
         },

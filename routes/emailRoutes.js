@@ -13,13 +13,13 @@ router.post("/send", EmailController.sendEmail);
 router.post("/welcome", EmailController.sendWelcomeEmail);
 
 // Send ticket notification email
-router.post("/ticket-notification", EmailController.sendTicketNotification);
+// router.post("/ticket-notification", EmailController.sendTicketNotification);
 
 // Send project assignment email
-router.post("/project-assignment", EmailController.sendProjectAssignment);
+// router.post("/project-assignment", EmailController.sendProjectAssignment);
 
 // Send password reset email
-router.post("/password-reset", EmailController.sendPasswordReset);
+router.post("/password-reset", EmailController.sendPasswordResetOTP);
 
 // Send bulk emails
 router.post("/bulk", EmailController.sendBulkEmails);
