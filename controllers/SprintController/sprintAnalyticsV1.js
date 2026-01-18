@@ -192,6 +192,38 @@ const sprintReport = []
     // console.log(velocityMatrix,"vm")
     console.log(sprintReport,"report")
 
+
+    const usersWorkingForProject = await UserWorkAccess.find({projectId:{$in:projectIds},userId:{$ne:null}}).select("userId").lean();
+   // 1. Extract the IDs into a flat array
+    // const userIdsArray = usersWorkingForProject.map(item => item.userId);
+    // console.log(userIdsArray)
+// Convert all ObjectIds to Strings to ensure matching
+const userIdsArray = usersWorkingForProject.map(item => String(item.userId));
+
+const userTickets = await TicketModel.aggregate([
+  {
+    $match: {
+      projectId: { $in: projectIds },
+      // Use the string version
+      assignee: { $in: userIdsArray }, 
+    },
+  },
+  {
+    $group: {
+      _id: "$projectId",
+      userId: { $first: "$assignee" },
+      tickets: { $push: "$$ROOT" },
+    },
+  },
+]);
+    console.log(userTickets,"userTickets")
+
+    // const userAssignedTickets = await TicketModel.find({
+    //   projectId:{$in:userForProject.projectIds},
+
+    // })
+    
+
     // 3️⃣ Sprint analytics per project
     // const velocityMatrix = ticketsByProject.map(project => ({
     //   projectId: project.projectId,
