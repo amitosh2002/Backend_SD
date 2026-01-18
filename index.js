@@ -11,10 +11,12 @@ import configuratorRoute from "./routes/SprintRoutes/confriguratorRoute.js";
 import cors from "cors";
 import keyValueRoute from "./routes/keyValuePairRoutes.js";
 import githubrouter from "./routes/Github/githubreporoutes.js";
+import githubAuthRouter from "./routes/Github/githubAuthRoutes.js";
 import inviteRoutes from "./routes/inviteRoutes.js";
 import sprintRoutes from "./routes/SprintRoutes/sprintRouteV1.js"
 import "./cronjs/cronjob.js";
 import guiRoutes from './routes/GUI_routes/guiRoutes.js';
+import aiRouter from "./routes/alRoute/aiRoute.js";
 // import aiRouter from "./routes/alRoute/aiRoute.js";
 import googleLoginRoute from "./routes/SSO/googleLogin.js";
 import { authenticateToken } from "./middleware/authMiddleware.js";
@@ -35,6 +37,8 @@ app.use(express.json());
 const allowedOrigins = [
   "http://localhost:5173",
   "https://sd-tracking.onrender.com",
+  "https://dev-hora.netlify.app",
+  "https://stage-hora.netlify.app",
 ];
 
 app.use(
@@ -109,6 +113,10 @@ startServer();
 // }
 
 // routes initiliztion
+
+//ai routes
+app.use("/api/ai", aiRouter);
+
 app.use("/api/platform", projectRoutes); // routes for each project
 app.use("/api/platform", ticketRoutes); // ticket routes
 app.use("/api/email", emailRoutes); // email routes
@@ -118,6 +126,7 @@ app.use("/api/platform", keyValueRoute);
 app.use("/api/platform", userRoutes);
 // for github intregation 
 app.use("/api/gihub-repo",githubrouter)
+app.use("/api/auth/github", githubAuthRouter);
 // app.use("/api/partner",inviteRoutes);
 app.use("/api/partner",inviteRoutes);
 app.use("/api/auth/sso", googleLoginRoute);
@@ -134,7 +143,12 @@ app.use("/api/platform", userRoutes);
 app.get("/server", (req, res) => {
   res.send("Hello World!");
   
-},)
+}
+
+
+
+);
+
 app.use('/api/gui',guiRoutes);
 // table/otp
 
@@ -160,4 +174,5 @@ app.get("/analytics", (req, res) => {
 // Start the server
 app.listen(8000, () => {
     console.log("Dashboard active on http://localhost:8000/get/server");
+
 }); // Fixed: removed extra parentheses and commas
