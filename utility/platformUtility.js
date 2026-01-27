@@ -2,6 +2,7 @@ import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js
 import { TicketModel } from "../models/TicketModels.js";
 import SprintBoardConfig from "../models/PlatformModel/SprintModels/confrigurator/sprintBoardModel.js"
 import ScrumProjectFlow from "../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js"
+import AnalyticMapping from "../models/AnalyticsModels/AnalyticsMappingFields.js"
 
 export function getWeekNumber(date) {
 
@@ -286,6 +287,16 @@ export const getAppSprintAnalytics = async (sprintId) => {
       throw new Error("No associated work found for the sprint");
     }
 
+    // Fetch mapping
+    const mapping = await AnalyticMapping.findOne({ projectId: sprint.projectId }).lean();
+    
+    // Default mappings if none found
+    const todoStatuses = mapping?.statusMapping?.todo || ["OPEN"];
+    const inProgressStatuses = mapping?.statusMapping?.inProgress || ["IN_PROGRESS"];
+    const testingStatuses = mapping?.statusMapping?.testing || ["TESTING"];
+    const doneStatuses = mapping?.statusMapping?.done || ["CLOSED", "DONE"];
+    const effortField = mapping?.effortConfig?.field || "storyPoint";
+
     // Initialize counters
     let totalStoryPoint = 0;
     let completedStoryPoint = 0;
@@ -298,28 +309,25 @@ export const getAppSprintAnalytics = async (sprintId) => {
     let totalTicketInTestingInSprint = 0;
 
     tasks.forEach((task) => {
-      const estimate = task.estimatePoints || 0;
+      const estimate = task[effortField] || task.storyPoint || task.estimatePoints || 0;
       totalStoryPoint += estimate;
+      const status = task?.status?.toUpperCase();
 
-      switch (task?.status) {
-        case "OPEN":
-          totalOpenTaskInSprint += 1;
-          break;
-        case "IN_PROGRESS":
-          totalInProgressTaskInSprint += 1;
-          break;
-        case "RESOLVED":
-          resolvedTaskInSprint += 1;
-          break;
-        case "CLOSED":
-          totalClosedTaskInSprint += 1;
-          completedStoryPoint += estimate;
-          completedTaskInSprint += 1;
-          break;
+      if (todoStatuses.includes(status)) {
+        totalOpenTaskInSprint += 1;
+      } else if (inProgressStatuses.includes(status)) {
+        totalInProgressTaskInSprint += 1;
+      } else if (testingStatuses.includes(status)) {
+        totalTicketInTestingInSprint += 1;
+      } else if (doneStatuses.includes(status)) {
+        totalClosedTaskInSprint += 1;
+        completedStoryPoint += estimate;
+        completedTaskInSprint += 1;
       }
 
-      if (task.status && task.status.includes("TESTING")) {
-        totalTicketInTestingInSprint += 1;
+      // Keep resolved counter for backward compatibility if possible, or omit if covered above
+      if (status === "RESOLVED") {
+        resolvedTaskInSprint += 1;
       }
     });
 
@@ -684,3 +692,19 @@ export const getCleanUniqueItems = (configArray, key, fields) => {
     return picked;
   });
 };
+
+export function extractJSONForLLM(result) {
+  try {
+    // 1. Get the raw text from the SDK object
+    let rawText = result.response.text(); 
+    
+    // 2. Clean common LLM formatting if not using responseMimeType
+    const cleanText = rawText.replace(/```json|```/g, "").trim();
+    
+    // 3. Parse into a real JS Object
+    return JSON.parse(cleanText);
+  } catch (err) {
+    console.error("Failed to parse AI response as JSON", err);
+    return null;
+  }
+}

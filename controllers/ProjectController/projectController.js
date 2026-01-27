@@ -3,7 +3,7 @@
 // controller to create a new project or add a new project
 // import {ProjectModel} from '../models/ProjectModels.js';
 
-import mongoose from "mongoose";
+import mongoose, { set } from "mongoose";
 import { invitationAuthToken } from "../../middleware/authMiddleware.js";
 import { InvitationTracking } from "../../models/PlatformModel/invitaionTrakingModel.js";
 import { PartnerModel } from "../../models/PlatformModel/partnerModel.js";
@@ -1020,6 +1020,109 @@ export const ticketConfigurator = async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: "Failed to update or fetch project configuration" 
+    });
+  }
+};
+
+
+
+export const projectMemberController = async (req, res) => {
+  try {
+    const { projectId, action, memberIds, role } = req.body;
+    const adminUserId = req.user.userId;
+
+    // 1. Permission Check (Must be Admin/Manager level)
+    const haveRights = await UserWorkAccess.exists({
+      projectId: projectId,
+      userId: adminUserId,
+      accessType: { $gte: 300 }
+    });
+
+    if (!haveRights) {
+      return res.status(403).json({ success: false, msg: "Insufficient permissions to manage members." });
+    }
+
+    switch (action.toLowerCase()) {
+
+      case "get":
+        // 2. Fetch all unique User IDs associated with this project
+        const accessRecords = await UserWorkAccess.find({ projectId ,userId:{$ne:null}})
+          .select("userId email accessType")
+          .lean();
+
+        if (!accessRecords || accessRecords.length === 0) {
+          return res.status(404).json({ success: false, msg: "No members found for this project." });
+        }
+
+        // 3. Optimized Data Fetching: Get all User details in ONE query
+        const userIds = accessRecords.map(record => record.userId).filter(id => id != null);
+        const userDetails = await User.find({ _id: { $in: userIds } })
+          .select("profile username email")
+          .lean();
+
+        // 4. Map details back to the access records
+        const membersList = accessRecords.map(record => {
+          const detail = userDetails.find(u => u._id.toString() === record.userId?.toString());
+          return {
+            userId: record.userId,
+            email: record.email,
+            role: record.accessType,
+            details: detail || null
+          };
+        });
+
+        // 5. Success Response
+        return res.status(200).json({
+          success: true,
+          count: membersList.length,
+          members: membersList
+        });
+
+      case "update":
+        if (!memberIds || memberIds.length === 0) {
+          return res.status(400).json({ success: false, msg: "No users specified for update." });
+        }
+        if (!role) {
+          return res.status(400).json({ success: false, msg: "Role (accessType) is required for update." });
+        }
+
+        const updateResult = await UserWorkAccess.updateMany(
+          { 
+            projectId: projectId, 
+            userId: { $in: memberIds } 
+          },
+          { $set: { accessType: role } }
+        );
+
+        if (updateResult.modifiedCount > 0) {
+          return res.status(200).json({ success: true, msg: `${updateResult.modifiedCount} members updated.` });
+        }
+        return res.status(404).json({ success: false, msg: "No members were updated. Please check if the users are part of this project." });
+
+      case "delete":
+        if (!memberIds || memberIds.length === 0) {
+          return res.status(400).json({ success: false, msg: "No users specified for deletion." });
+        }
+
+        const deleteResult = await UserWorkAccess.deleteMany({
+          projectId: projectId,
+          userId: { $in: memberIds }
+        });
+
+        if (deleteResult.deletedCount > 0) {
+          return res.status(200).json({ success: true, msg: `${deleteResult.deletedCount} members removed.` });
+        }
+        return res.status(404).json({ success: false, msg: "No members were deleted. Please check if the users are part of this project." });
+
+      default:
+        return res.status(400).json({ success: false, msg: "Invalid action specified." });
+    }
+ 
+  } catch (error) {
+    console.error("projectMemberController Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error during member management." 
     });
   }
 };
