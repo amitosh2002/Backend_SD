@@ -1,5 +1,5 @@
 import { validateToken } from '../../controllers/authController.js';
-import { acceptInvitataion, createProject, deleteProject, getProjectById, getUserAnalyticsAgg, invitationDetails, inviteUserToProject, listUserAccessibleProjects, projectMemberController, ticketConfigurator, updateProject, userWithProjectRights } from '../../controllers/ProjectController/projectController.js';
+import { acceptInvitataion, addSerivceToProjectV1, createProject, deleteProject, getAllRunningProjectServicebyProjectId, getProjectById, getUserAnalyticsAgg, HoraProjectServicesV1, invitationDetails, inviteUserToProject, listUserAccessibleProjects, projectMemberController, ticketConfigurator, updateProject, updateServiceStatus, userWithProjectRights } from '../../controllers/ProjectController/projectController.js';
 
 
 // const express = require('express');
@@ -28,6 +28,11 @@ projectRoutes.post("/v1/projects/manage",authenticateToken,projectMemberControll
 //=================user analytics===========
 projectRoutes.get('/v1/user-projects/getAll',authenticateToken,getUserAnalyticsAgg)
 
+//===============services=============
+projectRoutes.get('/v1/user-projects/services/bump',authenticateToken,HoraProjectServicesV1)
+projectRoutes.post('/v1/user-projects/services/associate',authenticateToken,addSerivceToProjectV1)
+projectRoutes.get('/v1/user-projects/services/active',authenticateToken,getAllRunningProjectServicebyProjectId)
+projectRoutes.post('/v1/user-projects/services/service/update',authenticateToken,updateServiceStatus)
 
 
 

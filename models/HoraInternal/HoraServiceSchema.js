@@ -26,6 +26,16 @@ const HoraServiceSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true
+    },
+    status:{
+        type:String,
+        enum:["ACTIVE","INACTIVE"],
+        default:"ACTIVE"
+    },
+    planType:{
+        type:String,
+        enum:["FREE","PAID"],
+        default:"FREE"
     }
   },
   { timestamps: true }

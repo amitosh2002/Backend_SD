@@ -3,37 +3,26 @@ import mongoose from "mongoose";
 const ProjectServiceSchema = new mongoose.Schema(
   {
     projectId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Project",
+      type: String,
+      ref: "Projects",
       required: true
     },
-
     serviceId: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: String,
       ref: "HoraService",
       required: true
     },
-
-    planType: {
+    status: {
       type: String,
-      enum: ["FREE", "PREMIUM", "ENTERPRISE"],
-      required: true,
-      default:"FREE"
-    },
-
-    liveDate: {
-      type: Date,
-    //   required: true
-    default:Date.now
-
+      enum: ["ACTIVE", "INACTIVE", "PENDING"],
+      default: "ACTIVE"
     },
     isActive: {
       type: Boolean,
       default: true
     },
-
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
+    activatedBy: {
+      type: String,
       ref: "User"
     }
   },
@@ -45,5 +34,15 @@ ProjectServiceSchema.index(
   { projectId: 1, serviceId: 1 },
   { unique: true }
 );
+
+
+
+// making virtual for service to populate data 
+ProjectServiceSchema.virtual("service", {
+  ref: "HoraService",
+  localField: "serviceId",
+  foreignField: "serviceId",
+  justOne: true
+});
 
 export default mongoose.model("ProjectService", ProjectServiceSchema);

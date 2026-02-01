@@ -391,6 +391,8 @@ export const validateScrumFlow = (columns) => {
 
 import { v4 as uuidv4 } from "uuid";
 import User from "../models/UserModel.js";
+import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
+import { UserWorkAccess } from "../models/PlatformModel/UserWorkAccessModel.js";
 
 /**
  * Shared default columns
@@ -665,7 +667,8 @@ export const getUserDetailById=async(id)=>{
     let userDetails = await User.findById(id);
     return {
         name: `${userDetails?.profile?.firstName ?? ''} ${userDetails?.profile?.lastName ?? ''}`.trim(),
-        email:userDetails.email
+        email:userDetails.email,
+        image:userDetails.profile?.avatar
     }
   } catch (error) {
     // throw new error;// foir updated db uri
@@ -708,3 +711,58 @@ export function extractJSONForLLM(result) {
     return null;
   }
 }
+
+
+export const getFullprojectCurrentWorkdetails = async (projectId, userId) => {
+  try {
+    const projectMapping = await AnalyticMapping.findOne({ projectId }).select("statusMapping").lean();
+
+    const todoStatuses = projectMapping?.statusMapping?.todo || ["OPEN"];
+    const inProgressStatuses = projectMapping?.statusMapping?.inProgress || ["In Progress"];
+    const testingStatuses = projectMapping?.statusMapping?.testing || ["In Review"];
+    const doneStatuses = projectMapping?.statusMapping?.done || ["Done"];
+
+    const [
+      todoCount,
+      inProgressCount,
+      testingCount,
+      doneCount,
+      teamMembers
+    ] = await Promise.all([
+      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: todoStatuses } }),
+      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: inProgressStatuses } }),
+      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: testingStatuses } }),
+      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: doneStatuses } }),
+      UserWorkAccess.find({ projectId, userId: { $ne: null } }).lean().select("userId")
+    ]);
+
+    const teamMemberDetails = await Promise.all(
+      teamMembers.map(async (member) => {
+        const team = await getUserDetailById(member.userId);
+        return {
+          image: team?.image,
+          name: team?.name,
+        };
+      })
+    );
+
+    return {
+      workCountForProject: todoCount + inProgressCount + testingCount + doneCount,
+      todoCount,
+      inProgressCount,
+      testingCount,
+      doneCount,
+      teamMemberDetails
+    };
+  } catch (error) {
+    console.error("Error in getFullprojectCurrentWorkdetails:", error);
+    return {
+      workCountForProject: 0,
+      todoCount: 0,
+      inProgressCount: 0,
+      testingCount: 0,
+      doneCount: 0,
+      teamMemberDetails: []
+    };
+  }
+};

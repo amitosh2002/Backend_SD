@@ -14,22 +14,6 @@ function slugifyTitle(input) {
     .substring(0, 50); // Limit length to prevent very long keys
 }
 
-// Define valid ticket types (you can modify this based on your needs)
-const TICKET_TYPES = [
-  "ARCH",
-  "BUG",
-  "FEATURE",
-  "TASK",
-  "STORY",
-  "EPIC",
-  "IMPROVEMENT",
-  "SUBTASK",
-  "TEST",
-  "DOCUMENTATION",
-  // Custom/portfolio types
-  "LIVEOPS",
-  "PLAT",
-];
 
 const TicketSchema = new mongoose.Schema(
   {
@@ -60,10 +44,7 @@ const TicketSchema = new mongoose.Schema(
     
     set: (val) => val ? val.toUpperCase() : val, 
     
-    // enum: {
-    //     values: TICKET_TYPES,
-    //     message: "Invalid ticket type. Must be one of: {VALUE}",
-    // },
+
 },
     sequenceNumber: {
       type: Number,
@@ -99,7 +80,7 @@ const TicketSchema = new mongoose.Schema(
       trim: true,
     },
     assignee: {
-      type: Object,
+      type: String,
       required: false,
       trim: true,
     },
@@ -326,5 +307,4 @@ TicketSchema.statics.findByFilters = function (filters = {}) {
 
 export const TicketModel = mongoose.model("Ticket", TicketSchema);
 
-// Export ticket types for use in frontend
-export { TICKET_TYPES };
+

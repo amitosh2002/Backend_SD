@@ -26,16 +26,24 @@ const createGmailTransporter = () => {
 };
 
 const createResendTransporter = () => {
-  console.log("[EMAIL] Using Resend SMTP");
-  return nodemailer.createTransport({
-    host: "smtp.resend.com",
-    port: 465,
-    secure: true,
-    auth: {
-      user: "resend",
-      pass: process.env.RESEND_API_KEY, // 🔑 API KEY here
+  console.log("[EMAIL] Using Resend SDK Wrapper");
+  return {
+    sendMail: async (mailOptions) => {
+      const { from, to, subject, html, text } = mailOptions;
+      try {
+        const data = await resend.emails.send({
+          from: from || process.env.EMAIL_FROM || "onboarding@resend.dev",
+          to: Array.isArray(to) ? to : [to],
+          subject,
+          html: html || text,
+        });
+        return { messageId: data.id, ...data };
+      } catch (error) {
+        console.error("[EMAIL] Resend SDK Error:", error);
+        throw error;
+      }
     },
-  });
+  };
 };
 
 /* -------------------------

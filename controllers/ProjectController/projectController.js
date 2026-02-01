@@ -11,9 +11,11 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import User from "../../models/UserModel.js";
 import { sendInvitationEmail } from "../../services/emailService.js";
-import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getUserDetailById } from "../../utility/platformUtility.js";
+import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getFullprojectCurrentWorkdetails, getUserDetailById } from "../../utility/platformUtility.js";
 import { TicketModel } from "../../models/TicketModels.js";
 import { TicketConfig } from "../../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
+import HoraServiceSchema from "../../models/HoraInternal/HoraServiceSchema.js";
+import ProjectService from "../../models/PlatformModel/ProjectServiceSchema.js";
 
 // import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
@@ -174,33 +176,44 @@ export const deleteProject = async (req, res) => {
         res.status(500).json({ message: 'Internal server error' });
     }
 }
-
 export const listUserAccessibleProjects = async (req, res) => {
-  const { userId } = req.body;
+  // const { userId } = req.body;
+  const userId=req.user.userId;
 
   try {
-    // Step 1: Get all user access records
-    const userAccessibleProjects = await UserWorkAccess.find({ userId });
+    // 1. Get all access records in one go
+    const userAccessRecords = await UserWorkAccess.find({ userId }).lean();
 
-    if (!userAccessibleProjects || userAccessibleProjects.length === 0) {
-      return res.status(404).json({ message: "No accessible projects found for this user" });
+    if (!userAccessRecords.length) {
+      return res.status(404).json({ message: "No accessible projects found" });
     }
 
-    // Step 2: Extract project IDs (string values)
-    const accessProjectIds = userAccessibleProjects
-      .map(access => access.projectId)
-      .filter(Boolean);
+    // 2. Extract unique Project IDs
+    const accessProjectIds = userAccessRecords.map(a => a.projectId).filter(Boolean);
 
-    // Step 3: Find projects matching those string IDs
-    const projects = await ProjectModel.find({ projectId: { $in: accessProjectIds } }).lean();
+    // 3. Get Project Metadata
+    const projects = await ProjectModel.find({ 
+      projectId: { $in: accessProjectIds } 
+    }).lean().select("projectId projectName images category description partnerCode status");
+    // 4. OPTIMIZED: Fetch all "Work Details" in parallel
+    // We map each project to a Promise, then resolve them all at once
+    const projectsWithDetails = await Promise.all(
+      projects.map(async (project) => {
+        const workDetails = await getFullprojectCurrentWorkdetails(project.projectId, userId);
+        return {
+          ...project,
+          projectOverview: workDetails
+        };
+      })
+    );
 
-    // Step 4: Send back both access info and project details
     return res.status(200).json({
-      count: projects.length,
-      projects,
+      count: projectsWithDetails.length,
+      projects: projectsWithDetails,
     });
+
   } catch (error) {
-    console.error("Error retrieving user accessible projects:", error);
+    console.error("Error in listUserAccessibleProjects:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -1126,3 +1139,174 @@ export const projectMemberController = async (req, res) => {
     });
   }
 };
+
+
+export const HoraProjectServicesV1 =async(req,res)=>{
+  try {
+    const {projectId} = req.query;
+
+    if (!projectId) {
+      return res.status(400).json({ success: false, msg: "Project ID is required." });
+    }
+    const [horaServices, projectService] = await Promise.all([
+      HoraServiceSchema.find({
+        isActive:true
+      }).lean(),
+      ProjectService.find({projectId}).lean()
+    ])
+    
+    console.log(horaServices)
+    console.log(projectService)
+
+    const horaServicesForProject= horaServices.map((service)=>{
+      const projectServiceRunning = projectService.find((projectService)=>projectService.serviceId === service.serviceId && projectService.isActive === true)
+      return {
+        ...service,
+        isRunning: projectServiceRunning ? true : false
+      }
+    })
+    if (!horaServicesForProject) {
+      return res.status(404).json({msg:"No services found !"})
+    }
+
+    return res.status(200).json({
+      success: true,
+      services: horaServicesForProject,
+      msg: "Services fetched successfully"
+    });
+  } catch (error) {
+    console.error("HoraProjectServicesV1 Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error while fetching services." 
+    });
+  }
+}
+
+export const addSerivceToProjectV1 = async (req, res) => {
+  try {
+    const { projectId, serviceId } = req.body;
+    const adminUserId = req.user.userId;
+
+    // 1. Permission Check (Must be Admin/Manager level)
+    const haveRights = await UserWorkAccess.exists({
+      projectId: projectId,
+      userId: adminUserId,
+      accessType: { $gte: 300 }
+    });
+
+    if (!haveRights) {
+      return res.status(403).json({ success: false, msg: "Insufficient permissions to manage services." });
+    }
+
+    // 2. Check if service exists
+    const service = await HoraServiceSchema.find({serviceId});
+    if (!service) {
+      return res.status(404).json({ msg: "No service found!" });
+    }
+
+    // 3. Create or update association in ProjectService model
+    const projectServiceAssociation = await ProjectService.findOneAndUpdate(
+      { projectId, serviceId },
+      { 
+        projectId, 
+        serviceId, 
+        isActive: true, 
+        status: "ACTIVE", 
+        activatedBy: adminUserId 
+      },
+      { upsert: true, new: true }
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: projectServiceAssociation,
+      msg: "Service added to project successfully"
+    });
+
+  } catch (error) {
+    console.error("addSerivceToProjectV1 Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error while adding service to project." 
+    });
+  }
+}
+
+
+export const getAllRunningProjectServicebyProjectId = async (req, res) => {
+  try {
+    const { projectId } = req.query;
+    const userId = req.user.userId;
+
+    // 1. Permission Check (Must be Admin/Manager level)
+    const haveRights = await UserWorkAccess.exists({
+      projectId: projectId,
+      userId: userId,
+      accessType: { $gte: 300 }
+    });
+    console.log(haveRights,userId,projectId,"check")
+    if (!haveRights) {
+      return res.status(403).json({ success: false, msg: "Insufficient permissions to manage services." });
+    }
+
+    // 2. Check if service exists
+    const service = await ProjectService.find({projectId}).select("serviceId isActive status").lean().populate("service","serviceId name description");
+    if (!service) {
+      return res.status(404).json({ msg: "No service found!" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: service,
+      msg: "Service fetched successfully"
+    });
+  } catch (error) {
+    console.error("getAllRunningProjectServicebyProjectId Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error while fetching service." 
+    });
+  }
+}
+
+export const updateServiceStatus = async (req, res) => {
+  try {
+    const { projectId, serviceId, status } = req.body;
+    const userId = req.user.userId;
+
+    // 1. Permission Check (Must be Admin/Manager level)
+    const haveRights = await UserWorkAccess.exists({
+      projectId: projectId,
+      userId: userId,
+      accessType: { $gte: 300 }
+    });
+
+    if (!haveRights) {
+      return res.status(403).json({ success: false, msg: "Insufficient permissions to manage services." });
+    }
+
+    // 2. Check if service exists
+    const service = await ProjectService.findOne({projectId, serviceId});
+    if (!service) {
+      return res.status(404).json({ msg: "No service found!" });
+    }
+
+    // 3. Update service status
+    service.status = status ? "ACTIVE" : "INACTIVE";
+    service.isActive =status
+    await service.save();
+
+    return res.status(200).json({
+      success: true,
+      data: service,
+      msg: "Service status updated successfully"
+    });
+  } catch (error) {
+    console.error("updateServiceStatus Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error while updating service status." 
+    });
+  }
+}

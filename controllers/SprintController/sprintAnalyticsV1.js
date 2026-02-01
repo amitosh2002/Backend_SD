@@ -2,9 +2,9 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import partnerSprint from "../../models/PlatformModel/SprintModels/partnerSprint.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import { TicketModel } from "../../models/TicketModels.js";
-import { getAppSprintAnalytics } from "../../utility/platformUtility.js";
+import { getAppSprintAnalytics, getUserDetailById } from "../../utility/platformUtility.js";
 import AnalyticMapping from "../../models/AnalyticsModels/AnalyticsMappingFields.js";
-import { getSprintReport } from "../../utility/doraUtility.js";
+import { getSprintReport, getSprintVelocityMatrix } from "../../utility/doraUtility.js";
 
 export const getSprintBurndown = async (req, res) => {
   try {
@@ -307,10 +307,10 @@ export const getSprintVelocity = async (req, res) => {
 //     });
 //   }
 // };
-export const platVelocityMatrix = async (req, res) => {
+export const platSprintAnalytics = async (req, res) => {
   try {
     const userId = req.user?.userId;
-    const { projectId } = req.body; // or req.query.projectId
+    const { projectId } = req.body; 
 
     if (!userId || !projectId) {
       return res.status(400).json({
@@ -333,73 +333,85 @@ export const platVelocityMatrix = async (req, res) => {
       });
     }
 
-    // 2️⃣ Users working in this project
+    // 2️⃣ Get the 3 most recent sprints (Active + Previous)
+    // We sort by sprintNumber descending to get the latest ones
+    const recentSprints = await partnerSprint.find({ projectId })
+      .sort({ sprintNumber: -1 })
+      .limit(3)
+      .lean();
+
+    if (!recentSprints.length) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const sprintIds = recentSprints.map(s => s.id);
+    const sprintMap = recentSprints.reduce((acc, s) => {
+        acc[s.id] = s.sprintName;
+        return acc;
+    }, {});
+    console.log(sprintIds,"sprintIds");
+    console.log(sprintMap,"sprintMap");
+    // 3️⃣ Identify users working in this project
     const usersWorking = await UserWorkAccess.find({
       projectId,
       userId: { $ne: null }
     }).select("userId").lean();
 
     const userIds = [...new Set(usersWorking.map(u => String(u.userId)))];
+    console.log(userIds,"userIds");
 
-    if (!userIds.length) {
-      return res.json({ success: true, data: [] });
-    }
-
-    // 3️⃣ Project-specific DONE status mapping
+    // 4️⃣ Project-specific status mapping (Now using Sets for O(1) lookup)
     const mapping = await AnalyticMapping.findOne({ projectId }).lean();
-
-    const doneStatuses =
-      (mapping?.statusMapping?.done || ["DONE", "CLOSED"])
-        .map(s => s.toUpperCase());
-
-    // 4️⃣ Fetch all tickets for this project & users
+    
+    const doneSet = new Set((mapping?.statusMapping?.done || ["DONE", "CLOSED"]).map(s => s.toUpperCase()));
+    const todoSet = new Set((mapping?.statusMapping?.todo || ["TODO", "BACKLOG", "OPEN"]).map(s => s.toUpperCase()));
+    const progressSet = new Set((mapping?.statusMapping?.inProgress || ["IN PROGRESS", "DEVELOPMENT"]).map(s => s.toUpperCase()));
+    const testingSet = new Set((mapping?.statusMapping?.testing || ["TESTING", "QA", "REVIEW"]).map(s => s.toUpperCase()));
+    // 5️⃣ Fetch all tickets for these sprints & users
     const tickets = await TicketModel.find({
       projectId,
+      sprint: { $in: sprintIds },
       assignee: { $in: userIds }
     }).lean();
-
-    // 5️⃣ Velocity calculation
-    const velocityMatrix = {};
-
-    for (const ticket of tickets) {
-      const assignee = String(ticket.assignee);
-
-      if (!velocityMatrix[assignee]) {
-        velocityMatrix[assignee] = {
-          userId: assignee,
-          totalCompleted: 0,
-          totalMinutes: 0,
-          ticketKeys: []
-        };
-      }
-
-      if (doneStatuses.includes(ticket.status?.toUpperCase())) {
-        velocityMatrix[assignee].totalCompleted += 1;
-        velocityMatrix[assignee].totalMinutes += ticket.totalTimeLogged || 0;
-        velocityMatrix[assignee].ticketKeys.push(ticket.ticketKey);
-      }
-    }
-
-    // 6️⃣ Convert to array
-    const result = Object.values(velocityMatrix);
+    // 6️⃣ Build User Velocity Matrix
+    // const velocityMatrix = {};
+     const velocityMatrix=await getSprintVelocityMatrix(tickets, { doneSet, todoSet, progressSet, testingSet }, sprintMap,projectId)
    
+    // 7️⃣ Calculate Top Contributor (User with most completed points)
+    let topContributorId = null;
+    let maxScore = -1;
 
-    const sprintAnalytics = await partnerSprint.find({
-      projectId:projectId
-    }).select("id").limit(3);
+    Object.values(velocityMatrix).forEach(user => {
+        if (user.totalCompleted > maxScore) {
+            maxScore = user.totalCompleted;
+            topContributorId = user.userId;
+        }
+    });
 
-    console.log(sprintAnalytics,"sprintAnalytics")
-    let sprints=sprintAnalytics.map(s=>s.id)
-    console.log(sprints,"sprints")
+    // 8️⃣ Finalize response data
+    const result = Object.values(velocityMatrix).map(user => ({
+        ...user,
+        isTopContributor: user.userId === topContributorId
+    }));
 
-    const res= await getSprintReport(sprints);
-    console.log("first sprint res",res)
-
-
+   
+    // 9️⃣ Generate AI Analytics for these sprints (Graceful failure)
+    let reportAnalysis = null;
+    // try {
+    //   reportAnalysis = await getSprintReport(sprintIds);
+    // } catch (aiError) {
+    //   console.warn("AI Analytics skip/fail:", aiError.message);
+    //   reportAnalysis = {
+    //     summary: { title: "Analytics Summary (AI Offline)" },
+    //     insights: ["AI analysis is currently unavailable due to quota limits, but your metrics are shown below."],
+    //     recommendations: ["Check back later for AI-powered sprint insights."]
+    //   };
+    // }
 
     return res.json({
       success: true,
-      data: result
+      data: result,
+      analytics: reportAnalysis
     });
 
   } catch (error) {
