@@ -397,16 +397,16 @@ export const platSprintAnalytics = async (req, res) => {
    
     // 9️⃣ Generate AI Analytics for these sprints (Graceful failure)
     let reportAnalysis = null;
-    // try {
-    //   reportAnalysis = await getSprintReport(sprintIds);
-    // } catch (aiError) {
-    //   console.warn("AI Analytics skip/fail:", aiError.message);
-    //   reportAnalysis = {
-    //     summary: { title: "Analytics Summary (AI Offline)" },
-    //     insights: ["AI analysis is currently unavailable due to quota limits, but your metrics are shown below."],
-    //     recommendations: ["Check back later for AI-powered sprint insights."]
-    //   };
-    // }
+    try {
+      reportAnalysis = await getSprintReport(sprintIds);
+    } catch (aiError) {
+      console.warn("AI Analytics skip/fail:", aiError.message);
+      reportAnalysis = {
+        summary: { title: "Analytics Summary (AI Offline)" },
+        insights: ["AI analysis is currently unavailable due to quota limits, but your metrics are shown below."],
+        recommendations: ["Check back later for AI-powered sprint insights."]
+      };
+    }
 
     return res.json({
       success: true,
