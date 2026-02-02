@@ -1,7 +1,9 @@
+import AnalyticMapping from "../../models/AnalyticsModels/AnalyticsMappingFields.js";
 import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import { TicketModel } from "../../models/TicketModels.js";
 import User from "../../models/UserModel.js";
+import { TicketConfig } from "../../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 import { analyzeCurrentWeekAndMonthLogs } from "../../utility/platformUtility.js";
 
 export const getUserRescentWork = async (req, res) => {
@@ -189,6 +191,82 @@ export const getUserTeamDetails = async (req, res) => {
         });
 
     } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+export const getUserWorkDetails = async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        let projectId = req.query.projectId;
+
+        // Strip quotes if present
+        if (projectId && projectId.startsWith('"') && projectId.endsWith('"')) {
+            projectId = projectId.substring(1, projectId.length - 1);
+        }
+
+        if (!projectId) {
+            return res.status(400).json({ success: false, message: "Project ID is required" });
+        }
+
+        // // Fetch username since TicketModel.assignee stores username
+        // const user = await User.findById(userId).select('username');
+        // if (!user) {
+        //     return res.status(404).json({ success: false, message: "User not found" });
+        // }
+        // const username = user.username;
+
+        const projectMappingArr = await AnalyticMapping.find({ projectId }).lean();
+        if (!projectMappingArr.length) {
+            return res.status(404).json({ success: false, message: "No analytic mapping found for this project" });
+        }
+        
+        const projectMapping = projectMappingArr[0];
+        const statusMap = projectMapping.statusMapping || {};
+        
+        const todoStatus = statusMap.todo || [];
+        const inProgressStatus = statusMap.inProgress || [];
+        const inReviewStatus = statusMap.testing || []; // testing maps to inReview in Response
+        const doneStatus = statusMap.done || [];
+
+        const [todoTickets, inProgressTickets, inReviewTickets, doneTickets] = await Promise.all([
+            TicketModel.find({ projectId, status: { $in: todoStatus }, assignee: userId }),
+            TicketModel.find({ projectId, status: { $in: inProgressStatus }, assignee: userId }),
+            TicketModel.find({ projectId, status: { $in: inReviewStatus }, assignee: userId }),
+            TicketModel.find({ projectId, status: { $in: doneStatus }, assignee: userId })
+        ]);
+
+        const ticketConfigArr = await TicketConfig.find({ projectId }).select("priorities labels").lean();
+        const priorities = ticketConfigArr.length > 0 ? (ticketConfigArr[0].priorities || []) : [];
+        const labels = ticketConfigArr.length > 0 ? (ticketConfigArr[0].labels || []) : [];
+
+        const mapTicket = (item) => {
+            const priorityObj = priorities.find(p => p.id === (Array.isArray(item.priority) ? item.priority[0] : item.priority));
+            const labelObj = labels.find(l => l.id === (Array.isArray(item.labels) ? item.labels[0] : item.labels));
+            return {
+                ticketKey: item.ticketKey,
+                title: item.title,
+                status: item.status,
+                label: labelObj ? labelObj.name : "Unknown",
+                priority: priorityObj ? priorityObj.name : "Unknown",
+                timeLogs: item.timeLogs,
+                totalTimeLogged: item.totalTimeLogged
+            };
+        };
+
+        res.status(200).json({
+            success: true,
+            data: {
+                openTickets: todoTickets.map(mapTicket),
+                inProgressTickets: inProgressTickets.map(mapTicket),
+                inReviewTickets: inReviewTickets.map(mapTicket),
+                doneTickets: doneTickets.map(mapTicket)
+            }
+        });
+    } catch (error) {
+        console.error("Error in getUserWorkDetails:", error);
         res.status(500).json({
             success: false,
             message: error.message

@@ -19,6 +19,7 @@ import guiRoutes from './routes/GUI_routes/guiRoutes.js';
 import aiRouter from "./routes/alRoute/aiRoute.js";
 // import aiRouter from "./routes/alRoute/aiRoute.js";
 import googleLoginRoute from "./routes/SSO/googleLogin.js";
+import serviceRoutes from "./routes/HoraInternal/serviceRoutes.js";
 import { authenticateToken } from "./middleware/authMiddleware.js";
 import {generateDashboard} from "./utility/serverdashboard.js";
 // import { MongoClient } from 'mongodb';
@@ -124,6 +125,7 @@ app.use("/api/auth", authRoutes); // authentication routes
 //key value pair routes
 app.use("/api/platform", keyValueRoute);
 app.use("/api/platform", userRoutes);
+app.use("/api/hora/v1/services", serviceRoutes);
 // for github intregation 
 app.use("/api/gihub-repo",githubrouter)
 app.use("/api/auth/github", githubAuthRouter);
