@@ -56,8 +56,7 @@ export const createTicketV2 = async (req, res) => {
   try {
     const ticketData = req.body;
     const userId =  req.user.userId || req.body.userId;
-    console.log(ticketData)
-    
+    console.log(ticketData)    
     // const userId = req.body.userId || (req.user && req.user.userId);
     if (!userId) return res.status(401).json({ message: 'Missing userId or unauthenticated' });
     const user = await User.findById(userId);
@@ -73,21 +72,24 @@ export const createTicketV2 = async (req, res) => {
         code: "MISSING_REQUIRED_FIELDS"
       });
     }
-  let priority = (ticketData?.priority || '').toString().toUpperCase();
-    console.log(priority)
+  // let priority = (ticketData?.priority || '').toString().toUpperCase();
+    // console.log(priority)
     // Optional: Sanitize and set defaults
     const sanitizedData = {
       // Set defaults if not provided
       title:ticketData?.title,
       description:ticketData?.description,
       type: ticketData?.type?.type || ticketData?.type,
-      priority: priority || 'MEDIUM',
+      priority: ticketData?.priority || 'MEDIUM',
       status: ticketData?.status || 'OPEN',
       // Add reporter from authenticated user if not provided
       reporter: ticketData?.reporter  || user?.username,
       assignee: ticketData?.assignee || "Unassigned",
       // Add timestamps
       createdBy: user?.userId,
+      storyPoints: ticketData?.storyPoints || 0,
+      labels: ticketData?.labels || [],
+      eta: ticketData?.dueDate ? new Date(ticketData.dueDate).toISOString() : null,
       projectId: ticketData?.projectId,
       // Remove any undefined or null values
     };
@@ -189,7 +191,7 @@ export const listTickets = async (req, res) => {
       labels,
       priority,
       ticketConvention, // maps to TicketModel.type
-      sort = "updatedAt",
+      sort = "createdAt",
       sprint,
       partnerId,
     } = req.query;

@@ -22,6 +22,8 @@ import googleLoginRoute from "./routes/SSO/googleLogin.js";
 import serviceRoutes from "./routes/HoraInternal/serviceRoutes.js";
 import { authenticateToken } from "./middleware/authMiddleware.js";
 import {generateDashboard} from "./utility/serverdashboard.js";
+import utilityRouter from "./routes/utilityRoutes/utillityRoutes.js";
+import inAppNotificationRoute from "./routes/NotificationRoutes/inAppNotificationRouteV1.js";
 // import { MongoClient } from 'mongodb';
 // import bodyParser from 'body-parser';
 // import dotenv from 'dotenv';
@@ -138,6 +140,12 @@ app.use("/api/sprint", sprintRoutes);
 // Sprint board configurator routes (protected)
 app.use("/api/sprint/configurator", authenticateToken, configuratorRoute);
 
+//utillity routes
+app.use("/api/platform",utilityRouter)
+
+
+//notifiaction Routes
+app.use("/api/platform", inAppNotificationRoute);
 
 // user routes
 app.use("/api/platform", userRoutes);

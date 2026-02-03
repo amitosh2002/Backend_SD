@@ -163,7 +163,7 @@ export const getUserTeamDetails = async (req, res) => {
         const teamAccess = await UserWorkAccess.find({
             projectId: { $in: userProjectIds },
             status: "accepted"
-        }).populate('userId', 'username email profile');
+        }).populate('userId', 'username email profile accessType status');
 
         // 4. Attach members to projects
         const result = projects.map(project => {
