@@ -1,21 +1,69 @@
 import InAppNotifications from "../models/NotificationModels/NotificationSchema.js";
+import { getIO } from "../Socket/socket.js";
 
-export const createNotification = async(userId,title,message,type,reference,priority)=>{
+/**
+ * Create notifications for multiple users and emit socket events
+ */
+export const createBulkNotification = async ({
+  userIds = [],
+  title,
+  message,
+  type,
+  reference,
+  priority = 8,
+  meta = {},
+}) => {
+  try {
+    if (!userIds.length) return [];
+
+    // 1️⃣ Prepare documents
+    const notificationsToCreate = userIds.map((userId) => ({
+      userId,
+      title,
+      message,
+      type,
+      reference,
+      priority,
+      meta,
+      isDeleted: false,
+    }));
+
+    // 2️⃣ Insert many
+    const notifications = await InAppNotifications.insertMany(
+      notificationsToCreate,
+      { ordered: false }
+    );
+
+    // 3️⃣ Emit socket events (non-blocking)
     try {
-        const notification = await InAppNotifications.create({
-            userId,
-            title,
-            message,
-            type,
-            reference,
-            priority: priority?? 8,
-        })
-        return notification
-    } catch (error) {
-        console.log(error)
-        return error
+      const io = getIO();
+
+      notifications.forEach((notification) => {
+        console.log(`Socket: Emitting notification to user ${notification.userId.toString()}`);
+        // Emit with all necessary fields for the frontend
+        io.to(notification.userId.toString()).emit('notification', {
+          id: notification._id,
+          notificationId: notification.notificationId || notification._id, // Fallback if not generated yet
+          title: notification.title,
+          message: notification.message,
+          type: notification.type,
+          priority: notification.priority,
+          reference: notification.reference,
+          meta: notification.meta,
+          status: notification.status !== undefined ? notification.status : false, // Default to false (unread)
+          createdAt: notification.createdAt,
+        });
+      });
+    } catch (socketError) {
+      console.log('⚠️ Socket emit failed:', socketError.message);
     }
-}
+
+    return notifications;
+  } catch (error) {
+    console.log('❌ createBulkNotification error:', error);
+    return [];
+  }
+};
 
 
 export const processChartData = (notifications) => {
