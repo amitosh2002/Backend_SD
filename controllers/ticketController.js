@@ -360,8 +360,11 @@ export const listTickets = async (req, res) => {
       await Promise.all(
         items.map(async (ticket) => {
           const user = await getUserDetailById(ticket?.assignee);
+          const config=await TicketConfig.findOne({projectId:ticket?.projectId});
+          const projectName= await ProjectModel.findOne({projectId:ticket?.projectId});
+          ticket.type=config?.conventions.find((convention)=>convention.id===ticket.type)?.name;
           ticket.assignee = user?.name || "";
-          console.log(ticket.assignee)
+          ticket.projectName = projectName?.projectName;
         })
       );
 
