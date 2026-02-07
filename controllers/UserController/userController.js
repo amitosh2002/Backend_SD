@@ -8,7 +8,8 @@ import { analyzeCurrentWeekAndMonthLogs } from "../../utility/platformUtility.js
 
 export const getUserRescentWork = async (req, res) => {
    
-    const { userId } = req.body; 
+    // const { userId } = req.body;
+    const userId= req.user.userId;
     if (!userId) {
         return res.status(400).json({ msg: "User ID is required" });
     }
@@ -77,7 +78,8 @@ export const getUserRescentWork = async (req, res) => {
 
 
 export const getUserTimeLog = async (req, res) => {
-    const { userId } = req.body; 
+    // const { userId } = req.body; 
+    const userId= req.user.userId;
 
     if (!userId) {
         return res.status(401).json({ msg: "User ID is required" });
@@ -163,7 +165,7 @@ export const getUserTeamDetails = async (req, res) => {
         const teamAccess = await UserWorkAccess.find({
             projectId: { $in: userProjectIds },
             status: "accepted"
-        }).populate('userId', 'username email profile');
+        }).populate('userId', 'username email profile accessType status');
 
         // 4. Attach members to projects
         const result = projects.map(project => {
@@ -252,7 +254,8 @@ export const getUserWorkDetails = async (req, res) => {
                 label: labelObj ? labelObj.name : "Unknown",
                 priority: priorityObj ? priorityObj.name : "Unknown",
                 timeLogs: item.timeLogs,
-                totalTimeLogged: item.totalTimeLogged
+                totalTimeLogged: item.totalTimeLogged,
+                id: item._id
             };
         };
 
@@ -273,3 +276,46 @@ export const getUserWorkDetails = async (req, res) => {
         });
     }
 };
+
+
+const getUserCalanderTimeline = async(req,res)=>{
+    try {
+
+        const userId = req.user.userId;
+
+
+        const userWorkingProject = await UserWorkAccess.find({
+            projectId,
+            userId,
+            status:"accepted"  }).lean();
+
+
+        const projectIds = userWorkingProject.map(project => project.projectId);
+
+        // =====================================USER TICKET ETA ============
+        const ticketETA = await TicketModel.aggregate([
+            {
+                $match: {
+                    projectId: { $in: projectIds },
+                    assignee: userId
+                }
+            },
+            {
+                $group: {
+                    _id: "$ticketKey",
+                    eta: { $max: "$eta" }
+                }
+            }
+        ]);
+
+
+
+
+
+        // =====================================USER TICKET ETA ============
+
+        
+    } catch (error) {
+        
+    }
+}

@@ -37,15 +37,15 @@ const TicketSchema = new mongoose.Schema(
       maxlength: [200, "Title cannot exceed 200 characters"],
       minlength: [3, "Title must be at least 3 characters long"],
     },
- type: {
-    type: String,
-    required: [true, "Ticket type is required"],
-    trim: true,
-    
-    set: (val) => val ? val.toUpperCase() : val, 
-    
+      type: {
+          type: String,
+          required: [true, "Ticket type is required"],
+          trim: true,
+          
+          set: (val) => val ? val.toUpperCase() : val, 
+          
 
-},
+      },
     sequenceNumber: {
       type: Number,
       required: false,

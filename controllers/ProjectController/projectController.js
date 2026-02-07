@@ -107,7 +107,7 @@ const newProject = new ProjectModel({
       // don't block project creation on board/flow creation failure
     }
 
-    res.status(201).json({ message: 'Project created successfully', project: newProject });
+    res.status(201).json({ message: 'Project created successfully', project: newProject ,status:201});
   } catch (error) {
     console.error('Error creating project:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -705,279 +705,130 @@ export const getSprintBoardFlowForProject = async (req, res) => {
 
 export const getUserAnalyticsAgg = async (req, res) => {
   const userId = req.user.userId;
-  console.log(userId,"userid ")
-  try {
-    let { startDate, endDate } = req.query;
-
-    // -------------------------------
-    // DEFAULT DATE RANGE (LAST 30 DAYS)
-    // -------------------------------
-    const now = new Date();
-
-    if (!startDate && !endDate) {
-      endDate = now;
-      startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    } else {
-      endDate = endDate ? new Date(endDate) : now;
-      startDate = startDate
-        ? new Date(startDate)
-        : new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
-    }
-
-    // const pipeline = [
-    //   {
-    //     $match: {
-    //       $or: [
-    //         { assignee: userId },
-    //         { "timeLogs.loggedBy": userId }
-    //       ]
-    //     }
-    //   },
-
-    //   {
-    //     $addFields: {
-    //       filteredTimeLogs: {
-    //         $filter: {
-    //           input: "$timeLogs",
-    //           as: "log",
-    //           cond: {
-    //             $and: [
-    //               { $gte: ["$$log.at", startDate] },
-    //               { $lte: ["$$log.at", endDate] },
-    //               { $eq: ["$$log.loggedBy", userId] }
-    //             ]
-    //           }
-    //         }
-    //       }
-    //     }
-    //   },
-
-    //   {
-    //     $addFields: {
-    //       totalTimeLogged: {
-    //         $sum: "$filteredTimeLogs.minutes"
-    //       }
-    //     }
-    //   },
-
-    //   {
-    //     $lookup: {
-    //       from: "Projects",
-    //       localField: "projectId",
-    //       foreignField: "projectId",
-    //       as: "project"
-    //     }
-    //   },
-
-    //   {
-    //     $lookup: {
-    //       from: "PartnerSprint",
-    //       localField: "sprintId",
-    //       foreignField: "sprintId",
-    //       as: "sprint"
-    //     }
-    //   },
-
-    //   { $unwind: { path: "$project", preserveNullAndEmptyArrays: true } },
-    //   { $unwind: { path: "$sprint", preserveNullAndEmptyArrays: true } },
-
-    //   {
-    //     $group: {
-    //       _id: {
-    //         projectId: "$projectId",
-    //         sprintId: "$sprintId"
-    //       },
-    //       projectName: { $first: "$project.name" },
-    //       sprintName: { $first: "$sprint.name" },
-    //       totalTime: { $sum: "$totalTimeLogged" },
-    //       totalStoryPoints: {
-    //         $sum: {
-    //           $cond: [{ $eq: ["$status", "Done"] }, "$storyPoints", 0]
-    //         }
-    //       }
-    //     }
-    //   },
-
-    //   { $sort: { totalTime: -1 } }
-    // ];
-
-
-    const pipeline = [
-  {
-    $match: {
-      $or: [
-        { assignee: userId },
-        { "timeLogs.loggedBy": userId }
-      ]
-    }
-  },
-
-  {
-    $addFields: {
-      filteredTimeLogs: {
-        $filter: {
-          input: "$timeLogs",
-          as: "log",
-          cond: {
-            $and: [
-              { $gte: ["$$log.at", startDate] },
-              { $lte: ["$$log.at", endDate] },
-              { $eq: ["$$log.loggedBy", userId] }
-            ]
-          }
-        }
-      }
-    }
-  },
-
-  {
-    $addFields: {
-      totalTimeLogged: { $sum: "$filteredTimeLogs.minutes" }
-    }
-  },
-
-  {
-    $lookup: {
-      from: "projects",
-      let: { ticketProjectId: "$projectId" },
-      pipeline: [
-        {
-          $match: {
-            $expr: {
-              $or: [
-                { $eq: ["$projectId", "$$ticketProjectId"] },
-                { $eq: [{ $toString: "$projectId" }, { $toString: "$$ticketProjectId" }] },
-                 { $eq: [{ $toString: "$_id" }, { $toString: "$$ticketProjectId" }] }
-              ]
-            }
-          }
-        }
-      ],
-      as: "project"
-    }
-  },
-
-  {
-
-    $lookup: {
-      from: "partnersprints",
-      let: { ticketSprintId: "$sprint" },
-      pipeline: [
-        {
-          $match: {
-            $expr: {
-              $or: [
-                { $eq: ["$id", "$$ticketSprintId"] },
-                { $eq: [{ $toString: "$id" }, { $toString: "$$ticketSprintId" }] },
-                 { $eq: [{ $toString: "$_id" }, { $toString: "$$ticketSprintId" }] }
-              ]
-            }
-          }
-        }
-      ],
-      as: "sprint"
-    }
-  },
-
-  { $unwind: { path: "$project", preserveNullAndEmptyArrays: true } },
-  { $unwind: { path: "$sprint", preserveNullAndEmptyArrays: true } },
-
-  {
-
-    $project: {
-      _id: 1,
-      title: 1,
-      ticketKey: 1,
-      status: 1,
-      priority: 1,
-      storyPoints: "$storyPoint",
-      totalTimeLogged: 1,
-      projectId: 1,
-      sprintId: 1, // Keep original ID if needed, or mapped one
-      projectName: { $ifNull: ["$project.projectName", "$project.name"] },
-      sprintName: "$sprint.sprintName",
-      timeLogs: "$filteredTimeLogs", // Only return filtered logs or all? Keeping filtered for now as per logic
-      // If we want all logs, we should use $timeLogs. But visually filtering usually implies showing relevant logs.
-      // However, the UI calculates total time from these logs.
-      createdAt: 1,
-      updatedAt: 1
-    }
-  },
-
-  {
-    $group: {
-      _id: {
-        projectId: "$projectId",
-        sprintId: "$sprintId"
-      },
-      projectName: { $first: "$projectName" },
-      sprintName: { $first: "$sprintName" },
-      // Collect tickets in this sprint
-      tickets: {
-        $push: {
-          _id: "$_id",
-          title: "$title",
-          ticketKey: "$ticketKey",
-          status: "$status",
-          priority: "$priority",
-          storyPoints: "$storyPoints",
-          assignee: "$assignee",
-          totalTimeAdded:"$timeLogs",
-          totalTimeLogged: "$totalTimeLogged",
-          createdAt: "$createdAt",
-          updatedAt: "$updatedAt"
-        }
-      },
-      totalTimeSprint: { $sum: "$totalTimeLogged" },
-      totalStoryPointsSprint: {
-         $sum: {
-           $cond: [
-             { $eq: ["$status", "Done"] },
-             { $ifNull: ["$storyPoints", 0] },
-             0
-           ]
-         }
-      }
-    }
-  },
+  let {startDate,endDate}=req.query;
+  const {projectId}=req.body;
   
-  {
-    $group: {
-      _id: "$_id.projectId",
-      projectName: { $first: "$projectName" },
-      sprints: {
-        $push: {
-          sprintId: "$_id.sprintId",
-          sprintName: "$sprintName",
-          totalTime: "$totalTimeSprint",
-          totalStoryPoints: "$totalStoryPointsSprint",
-          tickets: "$tickets"
-        }
-      },
-       totalTimeProject: { $sum: "$totalTimeSprint" }
-    }
-  },
   
-  { $sort: { totalTimeProject: -1 } }
-];
+  let now = new Date();
 
-    const data = await TicketModel.aggregate(pipeline);
+  if (!startDate && !endDate) {
+    endDate = now;
+    startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  } else {
+    endDate = endDate ? new Date(endDate) : now;
+    startDate = startDate
+      ? new Date(startDate)
+      : new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+  }
 
-    res.status(200).json({
-      success: true,
-      meta: {
-        startDate,
-        endDate
-      },
-      data
-    });
-  } catch (err) {
-    console.error("User analytics error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message
+  const [allTickets,allUserProjects]=await Promise.all([
+        TicketModel.find({
+        projectId,
+        assignee:userId,
+        updatedAt: {
+          $gte: startDate,
+          $lte: endDate,
+        },
+      }).select("title _id ticketKey status totalTimeLogged timeLogs "),
+        UserWorkAccess.find({
+          userId,
+          status: "accepted",
+        }).select("projectId").lean()
+        ]);
+
+  if(!allTickets){
+    return res.status(404).json({
+      message: "No tickets found",
     });
   }
+
+  // await Promise.all([
+
+  //   allTickets.map(async (ticket)=>{
+  //     const priority = await TicketConfig.findOne({projectId:ticket.projectId}).select("priorities");
+  //     const priorityName = priority.priorities.find((priority)=>priority.id===ticket.priority).name;
+  //     ticket.priority = priorityName;
+  //   })
+    
+  // ])
+
+  if(!allUserProjects){
+    return res.status(404).json({
+      message: "No projects found",
+    });
+  }
+  // this is full timelog of tickets not user specific
+   const totalTimeLog = allTickets.reduce((acc, ticket) => {
+    const ticketTime = (ticket.timeLogs || []).reduce((tAcc, log) => tAcc + (log.minutes || 0), 0);
+    return acc + ticketTime;
+  }, 0);
+  const uniqueProject = [...new Set(allUserProjects.map((project)=>project.projectId))];
+  let projectTimelog={}
+  await new Promise(async (resolve, reject) => {
+  try {
+    // 1. Use map to create an array of promises
+    const processingPromises = uniqueProject.map(async (projectId) => {
+
+      const allTicket= await TicketModel.find({projectId,assignee:userId,updatedAt: { $gte: startDate, $lte: endDate, },}).lean();
+      // Filter tickets for this specific project
+      console.log(allTicket,"allTicket")
+      const tickets = allTicket.filter((ticket) => ticket.projectId === projectId);
+      // Calculate total time
+        const totalTimeLogged = tickets.reduce((acc, ticket) => {
+        // 1. Ensure timeLogs exists
+        const logs = ticket.timeLogs || [];
+        
+        const ticketTime = logs.reduce((tAcc, log) => {
+          // 2. Normalize both IDs to strings and trim any potential whitespace
+          const entryUser = String(log.loggedBy || '').trim();
+          const targetUser = String(userId || '').trim();
+
+          // 3. Compare and add
+          if (entryUser == targetUser && targetUser !== '') {
+
+            return tAcc + (Number(log.minutes) || 0);
+          }
+          return tAcc;
+        }, 0);
+
+        return acc + ticketTime;
+      }, 0);
+
+      // 2. Fetch project name (await is now valid because the map callback is async)
+      const project = await ProjectModel.findOne({projectId}).select("projectName").lean();
+      
+      // Use the name as key, fallback to ID if name not found
+      const nameKey = project?.projectName || `Project-${projectId}`;
+      
+      return { name: nameKey, time: totalTimeLogged };
+    });
+
+    // 3. Wait for all database calls and calculations to finish
+    const resultsArray = await Promise.all(processingPromises);
+
+    // 4. Convert the results array back into your desired object format
+    resultsArray.forEach(item => {
+      projectTimelog[item.name] = item.time;
+    });
+
+    resolve(projectTimelog);
+    return res.status(200).json({
+      message: "User analytics fetched successfully",
+      data: {
+        totalTimeLog,
+        tickets:allTickets,
+        totalTickets:allTickets.length,
+        projectTimelog,
+      },
+    });
+  } catch (error) {
+    reject(error);
+  }
+});
+
+  
+
+
 };
 
 
@@ -1310,3 +1161,5 @@ export const updateServiceStatus = async (req, res) => {
     });
   }
 }
+
+
