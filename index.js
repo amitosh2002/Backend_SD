@@ -19,8 +19,14 @@ import guiRoutes from './routes/GUI_routes/guiRoutes.js';
 import aiRouter from "./routes/alRoute/aiRoute.js";
 // import aiRouter from "./routes/alRoute/aiRoute.js";
 import googleLoginRoute from "./routes/SSO/googleLogin.js";
+import serviceRoutes from "./routes/HoraInternal/serviceRoutes.js";
 import { authenticateToken } from "./middleware/authMiddleware.js";
 import {generateDashboard} from "./utility/serverdashboard.js";
+import utilityRouter from "./routes/utilityRoutes/utillityRoutes.js";
+import inAppNotificationRoute from "./routes/NotificationRoutes/inAppNotificationRouteV1.js";
+import http from "http";
+import { initSocket } from "./Socket/socket.js";
+import { time } from "console";
 // import { MongoClient } from 'mongodb';
 // import bodyParser from 'body-parser';
 // import dotenv from 'dotenv';
@@ -86,10 +92,41 @@ mongoose
   });
 
 const startServer = () => {
-  app.listen(port, () => {
+  server.listen(port, () => {
     console.log(`🚀 Server is running on port ${port}.`);
   });
 };
+
+
+// ===================================== notifiacation setup for socket io=====================
+// making the server for socket io
+const server = http.createServer(app);
+initSocket(server);
+
+// ===================================== notifiacation setup for socket io=====================
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ===================================== notifiacation setup for socket io=====================
+
+
+
+
+
+
+
+
+
 
 // const mongoUri = process.env.MONGODB_URI;
 // // console.log(mongoUri);
@@ -124,6 +161,7 @@ app.use("/api/auth", authRoutes); // authentication routes
 //key value pair routes
 app.use("/api/platform", keyValueRoute);
 app.use("/api/platform", userRoutes);
+app.use("/api/hora/v1/services", serviceRoutes);
 // for github intregation 
 app.use("/api/gihub-repo",githubrouter)
 app.use("/api/auth/github", githubAuthRouter);
@@ -136,6 +174,12 @@ app.use("/api/sprint", sprintRoutes);
 // Sprint board configurator routes (protected)
 app.use("/api/sprint/configurator", authenticateToken, configuratorRoute);
 
+//utillity routes
+app.use("/api/platform",utilityRouter)
+
+
+//notifiaction Routes
+app.use("/api/platform", inAppNotificationRoute);
 
 // user routes
 app.use("/api/platform", userRoutes);
@@ -172,7 +216,4 @@ app.get("/analytics", (req, res) => {
 }); // Fixed: changed comma to semicolon
 
 // Start the server
-app.listen(8000, () => {
-    console.log("Dashboard active on http://localhost:8000/get/server");
-
-}); // Fixed: removed extra parentheses and commas
+// Removed redundant app.listen call to avoid port conflicts and ensure socket.io works

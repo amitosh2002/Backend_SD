@@ -3,7 +3,7 @@
 // controller to create a new project or add a new project
 // import {ProjectModel} from '../models/ProjectModels.js';
 
-import mongoose from "mongoose";
+import mongoose, { set } from "mongoose";
 import { invitationAuthToken } from "../../middleware/authMiddleware.js";
 import { InvitationTracking } from "../../models/PlatformModel/invitaionTrakingModel.js";
 import { PartnerModel } from "../../models/PlatformModel/partnerModel.js";
@@ -11,9 +11,11 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import User from "../../models/UserModel.js";
 import { sendInvitationEmail } from "../../services/emailService.js";
-import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getUserDetailById } from "../../utility/platformUtility.js";
+import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getFullprojectCurrentWorkdetails, getUserDetailById } from "../../utility/platformUtility.js";
 import { TicketModel } from "../../models/TicketModels.js";
 import { TicketConfig } from "../../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
+import HoraServiceSchema from "../../models/HoraInternal/HoraServiceSchema.js";
+import ProjectService from "../../models/PlatformModel/ProjectServiceSchema.js";
 
 // import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
@@ -105,7 +107,7 @@ const newProject = new ProjectModel({
       // don't block project creation on board/flow creation failure
     }
 
-    res.status(201).json({ message: 'Project created successfully', project: newProject });
+    res.status(201).json({ message: 'Project created successfully', project: newProject ,status:201});
   } catch (error) {
     console.error('Error creating project:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -174,33 +176,44 @@ export const deleteProject = async (req, res) => {
         res.status(500).json({ message: 'Internal server error' });
     }
 }
-
 export const listUserAccessibleProjects = async (req, res) => {
-  const { userId } = req.body;
+  // const { userId } = req.body;
+  const userId=req.user.userId;
 
   try {
-    // Step 1: Get all user access records
-    const userAccessibleProjects = await UserWorkAccess.find({ userId });
+    // 1. Get all access records in one go
+    const userAccessRecords = await UserWorkAccess.find({ userId }).lean();
 
-    if (!userAccessibleProjects || userAccessibleProjects.length === 0) {
-      return res.status(404).json({ message: "No accessible projects found for this user" });
+    if (!userAccessRecords.length) {
+      return res.status(404).json({ message: "No accessible projects found" });
     }
 
-    // Step 2: Extract project IDs (string values)
-    const accessProjectIds = userAccessibleProjects
-      .map(access => access.projectId)
-      .filter(Boolean);
+    // 2. Extract unique Project IDs
+    const accessProjectIds = userAccessRecords.map(a => a.projectId).filter(Boolean);
 
-    // Step 3: Find projects matching those string IDs
-    const projects = await ProjectModel.find({ projectId: { $in: accessProjectIds } }).lean();
+    // 3. Get Project Metadata
+    const projects = await ProjectModel.find({ 
+      projectId: { $in: accessProjectIds } 
+    }).lean().select("projectId projectName images category description partnerCode status");
+    // 4. OPTIMIZED: Fetch all "Work Details" in parallel
+    // We map each project to a Promise, then resolve them all at once
+    const projectsWithDetails = await Promise.all(
+      projects.map(async (project) => {
+        const workDetails = await getFullprojectCurrentWorkdetails(project.projectId, userId);
+        return {
+          ...project,
+          projectOverview: workDetails
+        };
+      })
+    );
 
-    // Step 4: Send back both access info and project details
     return res.status(200).json({
-      count: projects.length,
-      projects,
+      count: projectsWithDetails.length,
+      projects: projectsWithDetails,
     });
+
   } catch (error) {
-    console.error("Error retrieving user accessible projects:", error);
+    console.error("Error in listUserAccessibleProjects:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -692,279 +705,130 @@ export const getSprintBoardFlowForProject = async (req, res) => {
 
 export const getUserAnalyticsAgg = async (req, res) => {
   const userId = req.user.userId;
-  console.log(userId,"userid ")
-  try {
-    let { startDate, endDate } = req.query;
-
-    // -------------------------------
-    // DEFAULT DATE RANGE (LAST 30 DAYS)
-    // -------------------------------
-    const now = new Date();
-
-    if (!startDate && !endDate) {
-      endDate = now;
-      startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    } else {
-      endDate = endDate ? new Date(endDate) : now;
-      startDate = startDate
-        ? new Date(startDate)
-        : new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
-    }
-
-    // const pipeline = [
-    //   {
-    //     $match: {
-    //       $or: [
-    //         { assignee: userId },
-    //         { "timeLogs.loggedBy": userId }
-    //       ]
-    //     }
-    //   },
-
-    //   {
-    //     $addFields: {
-    //       filteredTimeLogs: {
-    //         $filter: {
-    //           input: "$timeLogs",
-    //           as: "log",
-    //           cond: {
-    //             $and: [
-    //               { $gte: ["$$log.at", startDate] },
-    //               { $lte: ["$$log.at", endDate] },
-    //               { $eq: ["$$log.loggedBy", userId] }
-    //             ]
-    //           }
-    //         }
-    //       }
-    //     }
-    //   },
-
-    //   {
-    //     $addFields: {
-    //       totalTimeLogged: {
-    //         $sum: "$filteredTimeLogs.minutes"
-    //       }
-    //     }
-    //   },
-
-    //   {
-    //     $lookup: {
-    //       from: "Projects",
-    //       localField: "projectId",
-    //       foreignField: "projectId",
-    //       as: "project"
-    //     }
-    //   },
-
-    //   {
-    //     $lookup: {
-    //       from: "PartnerSprint",
-    //       localField: "sprintId",
-    //       foreignField: "sprintId",
-    //       as: "sprint"
-    //     }
-    //   },
-
-    //   { $unwind: { path: "$project", preserveNullAndEmptyArrays: true } },
-    //   { $unwind: { path: "$sprint", preserveNullAndEmptyArrays: true } },
-
-    //   {
-    //     $group: {
-    //       _id: {
-    //         projectId: "$projectId",
-    //         sprintId: "$sprintId"
-    //       },
-    //       projectName: { $first: "$project.name" },
-    //       sprintName: { $first: "$sprint.name" },
-    //       totalTime: { $sum: "$totalTimeLogged" },
-    //       totalStoryPoints: {
-    //         $sum: {
-    //           $cond: [{ $eq: ["$status", "Done"] }, "$storyPoints", 0]
-    //         }
-    //       }
-    //     }
-    //   },
-
-    //   { $sort: { totalTime: -1 } }
-    // ];
-
-
-    const pipeline = [
-  {
-    $match: {
-      $or: [
-        { assignee: userId },
-        { "timeLogs.loggedBy": userId }
-      ]
-    }
-  },
-
-  {
-    $addFields: {
-      filteredTimeLogs: {
-        $filter: {
-          input: "$timeLogs",
-          as: "log",
-          cond: {
-            $and: [
-              { $gte: ["$$log.at", startDate] },
-              { $lte: ["$$log.at", endDate] },
-              { $eq: ["$$log.loggedBy", userId] }
-            ]
-          }
-        }
-      }
-    }
-  },
-
-  {
-    $addFields: {
-      totalTimeLogged: { $sum: "$filteredTimeLogs.minutes" }
-    }
-  },
-
-  {
-    $lookup: {
-      from: "projects",
-      let: { ticketProjectId: "$projectId" },
-      pipeline: [
-        {
-          $match: {
-            $expr: {
-              $or: [
-                { $eq: ["$projectId", "$$ticketProjectId"] },
-                { $eq: [{ $toString: "$projectId" }, { $toString: "$$ticketProjectId" }] },
-                 { $eq: [{ $toString: "$_id" }, { $toString: "$$ticketProjectId" }] }
-              ]
-            }
-          }
-        }
-      ],
-      as: "project"
-    }
-  },
-
-  {
-
-    $lookup: {
-      from: "partnersprints",
-      let: { ticketSprintId: "$sprint" },
-      pipeline: [
-        {
-          $match: {
-            $expr: {
-              $or: [
-                { $eq: ["$id", "$$ticketSprintId"] },
-                { $eq: [{ $toString: "$id" }, { $toString: "$$ticketSprintId" }] },
-                 { $eq: [{ $toString: "$_id" }, { $toString: "$$ticketSprintId" }] }
-              ]
-            }
-          }
-        }
-      ],
-      as: "sprint"
-    }
-  },
-
-  { $unwind: { path: "$project", preserveNullAndEmptyArrays: true } },
-  { $unwind: { path: "$sprint", preserveNullAndEmptyArrays: true } },
-
-  {
-
-    $project: {
-      _id: 1,
-      title: 1,
-      ticketKey: 1,
-      status: 1,
-      priority: 1,
-      storyPoints: "$storyPoint",
-      totalTimeLogged: 1,
-      projectId: 1,
-      sprintId: 1, // Keep original ID if needed, or mapped one
-      projectName: { $ifNull: ["$project.projectName", "$project.name"] },
-      sprintName: "$sprint.sprintName",
-      timeLogs: "$filteredTimeLogs", // Only return filtered logs or all? Keeping filtered for now as per logic
-      // If we want all logs, we should use $timeLogs. But visually filtering usually implies showing relevant logs.
-      // However, the UI calculates total time from these logs.
-      createdAt: 1,
-      updatedAt: 1
-    }
-  },
-
-  {
-    $group: {
-      _id: {
-        projectId: "$projectId",
-        sprintId: "$sprintId"
-      },
-      projectName: { $first: "$projectName" },
-      sprintName: { $first: "$sprintName" },
-      // Collect tickets in this sprint
-      tickets: {
-        $push: {
-          _id: "$_id",
-          title: "$title",
-          ticketKey: "$ticketKey",
-          status: "$status",
-          priority: "$priority",
-          storyPoints: "$storyPoints",
-          assignee: "$assignee",
-          totalTimeAdded:"$timeLogs",
-          totalTimeLogged: "$totalTimeLogged",
-          createdAt: "$createdAt",
-          updatedAt: "$updatedAt"
-        }
-      },
-      totalTimeSprint: { $sum: "$totalTimeLogged" },
-      totalStoryPointsSprint: {
-         $sum: {
-           $cond: [
-             { $eq: ["$status", "Done"] },
-             { $ifNull: ["$storyPoints", 0] },
-             0
-           ]
-         }
-      }
-    }
-  },
+  let {startDate,endDate}=req.query;
+  const {projectId}=req.body;
   
-  {
-    $group: {
-      _id: "$_id.projectId",
-      projectName: { $first: "$projectName" },
-      sprints: {
-        $push: {
-          sprintId: "$_id.sprintId",
-          sprintName: "$sprintName",
-          totalTime: "$totalTimeSprint",
-          totalStoryPoints: "$totalStoryPointsSprint",
-          tickets: "$tickets"
-        }
-      },
-       totalTimeProject: { $sum: "$totalTimeSprint" }
-    }
-  },
   
-  { $sort: { totalTimeProject: -1 } }
-];
+  let now = new Date();
 
-    const data = await TicketModel.aggregate(pipeline);
+  if (!startDate && !endDate) {
+    endDate = now;
+    startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  } else {
+    endDate = endDate ? new Date(endDate) : now;
+    startDate = startDate
+      ? new Date(startDate)
+      : new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+  }
 
-    res.status(200).json({
-      success: true,
-      meta: {
-        startDate,
-        endDate
-      },
-      data
-    });
-  } catch (err) {
-    console.error("User analytics error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message
+  const [allTickets,allUserProjects]=await Promise.all([
+        TicketModel.find({
+        projectId,
+        assignee:userId,
+        updatedAt: {
+          $gte: startDate,
+          $lte: endDate,
+        },
+      }).select("title _id ticketKey status totalTimeLogged timeLogs "),
+        UserWorkAccess.find({
+          userId,
+          status: "accepted",
+        }).select("projectId").lean()
+        ]);
+
+  if(!allTickets){
+    return res.status(404).json({
+      message: "No tickets found",
     });
   }
+
+  // await Promise.all([
+
+  //   allTickets.map(async (ticket)=>{
+  //     const priority = await TicketConfig.findOne({projectId:ticket.projectId}).select("priorities");
+  //     const priorityName = priority.priorities.find((priority)=>priority.id===ticket.priority).name;
+  //     ticket.priority = priorityName;
+  //   })
+    
+  // ])
+
+  if(!allUserProjects){
+    return res.status(404).json({
+      message: "No projects found",
+    });
+  }
+  // this is full timelog of tickets not user specific
+   const totalTimeLog = allTickets.reduce((acc, ticket) => {
+    const ticketTime = (ticket.timeLogs || []).reduce((tAcc, log) => tAcc + (log.minutes || 0), 0);
+    return acc + ticketTime;
+  }, 0);
+  const uniqueProject = [...new Set(allUserProjects.map((project)=>project.projectId))];
+  let projectTimelog={}
+  await new Promise(async (resolve, reject) => {
+  try {
+    // 1. Use map to create an array of promises
+    const processingPromises = uniqueProject.map(async (projectId) => {
+
+      const allTicket= await TicketModel.find({projectId,assignee:userId,updatedAt: { $gte: startDate, $lte: endDate, },}).lean();
+      // Filter tickets for this specific project
+      console.log(allTicket,"allTicket")
+      const tickets = allTicket.filter((ticket) => ticket.projectId === projectId);
+      // Calculate total time
+        const totalTimeLogged = tickets.reduce((acc, ticket) => {
+        // 1. Ensure timeLogs exists
+        const logs = ticket.timeLogs || [];
+        
+        const ticketTime = logs.reduce((tAcc, log) => {
+          // 2. Normalize both IDs to strings and trim any potential whitespace
+          const entryUser = String(log.loggedBy || '').trim();
+          const targetUser = String(userId || '').trim();
+
+          // 3. Compare and add
+          if (entryUser == targetUser && targetUser !== '') {
+
+            return tAcc + (Number(log.minutes) || 0);
+          }
+          return tAcc;
+        }, 0);
+
+        return acc + ticketTime;
+      }, 0);
+
+      // 2. Fetch project name (await is now valid because the map callback is async)
+      const project = await ProjectModel.findOne({projectId}).select("projectName").lean();
+      
+      // Use the name as key, fallback to ID if name not found
+      const nameKey = project?.projectName || `Project-${projectId}`;
+      
+      return { name: nameKey, time: totalTimeLogged };
+    });
+
+    // 3. Wait for all database calls and calculations to finish
+    const resultsArray = await Promise.all(processingPromises);
+
+    // 4. Convert the results array back into your desired object format
+    resultsArray.forEach(item => {
+      projectTimelog[item.name] = item.time;
+    });
+
+    resolve(projectTimelog);
+    return res.status(200).json({
+      message: "User analytics fetched successfully",
+      data: {
+        totalTimeLog,
+        tickets:allTickets,
+        totalTickets:allTickets.length,
+        projectTimelog,
+      },
+    });
+  } catch (error) {
+    reject(error);
+  }
+});
+
+  
+
+
 };
 
 
@@ -1023,3 +887,279 @@ export const ticketConfigurator = async (req, res) => {
     });
   }
 };
+
+
+
+export const projectMemberController = async (req, res) => {
+  try {
+    const { projectId, action, memberIds, role } = req.body;
+    const adminUserId = req.user.userId;
+
+    // 1. Permission Check (Must be Admin/Manager level)
+    const haveRights = await UserWorkAccess.exists({
+      projectId: projectId,
+      userId: adminUserId,
+      accessType: { $gte: 300 }
+    });
+
+    if (!haveRights) {
+      return res.status(403).json({ success: false, msg: "Insufficient permissions to manage members." });
+    }
+
+    switch (action.toLowerCase()) {
+
+      case "get":
+        // 2. Fetch all unique User IDs associated with this project
+        const accessRecords = await UserWorkAccess.find({ projectId ,userId:{$ne:null}})
+          .select("userId email accessType")
+          .lean();
+
+        if (!accessRecords || accessRecords.length === 0) {
+          return res.status(404).json({ success: false, msg: "No members found for this project." });
+        }
+
+        // 3. Optimized Data Fetching: Get all User details in ONE query
+        const userIds = accessRecords.map(record => record.userId).filter(id => id != null);
+        const userDetails = await User.find({ _id: { $in: userIds } })
+          .select("profile username email")
+          .lean();
+
+        // 4. Map details back to the access records
+        const membersList = accessRecords.map(record => {
+          const detail = userDetails.find(u => u._id.toString() === record.userId?.toString());
+          return {
+            userId: record.userId,
+            email: record.email,
+            role: record.accessType,
+            details: detail || null
+          };
+        });
+
+        // 5. Success Response
+        return res.status(200).json({
+          success: true,
+          count: membersList.length,
+          members: membersList
+        });
+
+      case "update":
+        if (!memberIds || memberIds.length === 0) {
+          return res.status(400).json({ success: false, msg: "No users specified for update." });
+        }
+        if (!role) {
+          return res.status(400).json({ success: false, msg: "Role (accessType) is required for update." });
+        }
+
+        const updateResult = await UserWorkAccess.updateMany(
+          { 
+            projectId: projectId, 
+            userId: { $in: memberIds } 
+          },
+          { $set: { accessType: role } }
+        );
+
+        if (updateResult.modifiedCount > 0) {
+          return res.status(200).json({ success: true, msg: `${updateResult.modifiedCount} members updated.` });
+        }
+        return res.status(404).json({ success: false, msg: "No members were updated. Please check if the users are part of this project." });
+
+      case "delete":
+        if (!memberIds || memberIds.length === 0) {
+          return res.status(400).json({ success: false, msg: "No users specified for deletion." });
+        }
+
+        const deleteResult = await UserWorkAccess.deleteMany({
+          projectId: projectId,
+          userId: { $in: memberIds }
+        });
+
+        if (deleteResult.deletedCount > 0) {
+          return res.status(200).json({ success: true, msg: `${deleteResult.deletedCount} members removed.` });
+        }
+        return res.status(404).json({ success: false, msg: "No members were deleted. Please check if the users are part of this project." });
+
+      default:
+        return res.status(400).json({ success: false, msg: "Invalid action specified." });
+    }
+ 
+  } catch (error) {
+    console.error("projectMemberController Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error during member management." 
+    });
+  }
+};
+
+
+export const HoraProjectServicesV1 =async(req,res)=>{
+  try {
+    const {projectId} = req.query;
+
+    if (!projectId) {
+      return res.status(400).json({ success: false, msg: "Project ID is required." });
+    }
+    const [horaServices, projectService] = await Promise.all([
+      HoraServiceSchema.find({
+        isActive:true
+      }).lean(),
+      ProjectService.find({projectId}).lean()
+    ])
+    
+    console.log(horaServices)
+    console.log(projectService)
+
+    const horaServicesForProject= horaServices.map((service)=>{
+      const projectServiceRunning = projectService.find((projectService)=>projectService.serviceId === service.serviceId && projectService.isActive === true)
+      return {
+        ...service,
+        isRunning: projectServiceRunning ? true : false
+      }
+    })
+    if (!horaServicesForProject) {
+      return res.status(404).json({msg:"No services found !"})
+    }
+
+    return res.status(200).json({
+      success: true,
+      services: horaServicesForProject,
+      msg: "Services fetched successfully"
+    });
+  } catch (error) {
+    console.error("HoraProjectServicesV1 Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error while fetching services." 
+    });
+  }
+}
+
+export const addSerivceToProjectV1 = async (req, res) => {
+  try {
+    const { projectId, serviceId } = req.body;
+    const adminUserId = req.user.userId;
+
+    // 1. Permission Check (Must be Admin/Manager level)
+    const haveRights = await UserWorkAccess.exists({
+      projectId: projectId,
+      userId: adminUserId,
+      accessType: { $gte: 300 }
+    });
+
+    if (!haveRights) {
+      return res.status(403).json({ success: false, msg: "Insufficient permissions to manage services." });
+    }
+
+    // 2. Check if service exists
+    const service = await HoraServiceSchema.find({serviceId});
+    if (!service) {
+      return res.status(404).json({ msg: "No service found!" });
+    }
+
+    // 3. Create or update association in ProjectService model
+    const projectServiceAssociation = await ProjectService.findOneAndUpdate(
+      { projectId, serviceId },
+      { 
+        projectId, 
+        serviceId, 
+        isActive: true, 
+        status: "ACTIVE", 
+        activatedBy: adminUserId 
+      },
+      { upsert: true, new: true }
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: projectServiceAssociation,
+      msg: "Service added to project successfully"
+    });
+
+  } catch (error) {
+    console.error("addSerivceToProjectV1 Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error while adding service to project." 
+    });
+  }
+}
+
+
+export const getAllRunningProjectServicebyProjectId = async (req, res) => {
+  try {
+    const { projectId } = req.query;
+    const userId = req.user.userId;
+
+    // 1. Permission Check (Must be Admin/Manager level)
+    const haveRights = await UserWorkAccess.exists({
+      projectId: projectId,
+      userId: userId,
+      accessType: { $gte: 300 }
+    });
+    console.log(haveRights,userId,projectId,"check")
+    if (!haveRights) {
+      return res.status(403).json({ success: false, msg: "Insufficient permissions to manage services." });
+    }
+
+    // 2. Check if service exists
+    const service = await ProjectService.find({projectId}).select("serviceId isActive status").lean().populate("service","serviceId name description");
+    if (!service) {
+      return res.status(404).json({ msg: "No service found!" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: service,
+      msg: "Service fetched successfully"
+    });
+  } catch (error) {
+    console.error("getAllRunningProjectServicebyProjectId Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error while fetching service." 
+    });
+  }
+}
+
+export const updateServiceStatus = async (req, res) => {
+  try {
+    const { projectId, serviceId, status } = req.body;
+    const userId = req.user.userId;
+
+    // 1. Permission Check (Must be Admin/Manager level)
+    const haveRights = await UserWorkAccess.exists({
+      projectId: projectId,
+      userId: userId,
+      accessType: { $gte: 300 }
+    });
+
+    if (!haveRights) {
+      return res.status(403).json({ success: false, msg: "Insufficient permissions to manage services." });
+    }
+
+    // 2. Check if service exists
+    const service = await ProjectService.findOne({projectId, serviceId});
+    if (!service) {
+      return res.status(404).json({ msg: "No service found!" });
+    }
+
+    // 3. Update service status
+    service.status = status ? "ACTIVE" : "INACTIVE";
+    service.isActive =status
+    await service.save();
+
+    return res.status(200).json({
+      success: true,
+      data: service,
+      msg: "Service status updated successfully"
+    });
+  } catch (error) {
+    console.error("updateServiceStatus Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error while updating service status." 
+    });
+  }
+}
+
+
