@@ -42,7 +42,7 @@ const getStatusColor = (status = "") => {
 const getFromEmail = () => {
   const region = process.env.SMTP_REGION;
 
-  if (region === "STAGING") {
+  if (region === "STAGING" || region === "PROD" || region === "production" || process.env.NODE_ENV === "production") {
     return process.env.RESEND_FROM_EMAIL;
   }
 
