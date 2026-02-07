@@ -53,7 +53,7 @@ const createResendTransporter = () => {
 const getEmailTransporter = () => {
   const region = (process.env.SMTP_REGION || "").toUpperCase();
 
-  if (region === "STAGING" || region === "PROD") {
+  if (region === "STAGING" || region === "PROD" || region === "production" || process.env.NODE_ENV === "production") {
     return createResendTransporter();
   }
 
