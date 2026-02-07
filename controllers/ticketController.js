@@ -448,12 +448,11 @@ export const updateTicket = async (req, res) => {
 // Assuming TicketModel is imported
 export const addTimeLog = async (req, res) => {
   try {
- 
     const { 
       ticketId,        // The ID of the ticket to update
       durationSeconds, // The total time logged, in seconds (from client conversion)
       note,            // The description of the work
-      loggedBy         // The ID or name of the user logging the time
+     
     } = req.body;
     const userId = req.user.userId;
 
@@ -487,7 +486,7 @@ export const addTimeLog = async (req, res) => {
             // 💡 Using durationMinutes to fit your original schema field 'minutes'
             minutes: durationMinutes, 
             note, 
-            userId 
+            loggedBy:userId 
           } 
         } ,
          $inc: { totalTimeLogged: durationMinutes } // Targets the new top-level field
@@ -1044,6 +1043,108 @@ const uniqueTicketConvention = getCleanUniqueItems(ticketConfig, 'conventions', 
     });
   } catch (error) {
     console.error("getSortKeyValues error:", error);
+    return res.status(500).json({ msg: "Something went wrong" });
+  }
+
+}
+
+
+export const getCurrentProjectSprintWork=async(req,res)=>{
+
+  try {
+    const userId = req.user.userId;
+    const {projectId}=req.query;
+    if(!projectId){
+      return res.status(400).json({ msg: "Project id required" });
+    }
+    // const
+    // Verify requesting user has access to the project
+    const currentUserAccess = await UserWorkAccess.findOne({ userId: userId, projectId: projectId });
+
+    if (!currentUserAccess) {
+      return res.status(403).json({ msg: "Access denied to this project" });
+    }
+    
+    // Get all users who have accepted access to this project
+    const allProjectAccess = await UserWorkAccess.find({ projectId: projectId, status: "accepted" }).lean();
+    const projectUserIds = allProjectAccess.map(a => a.userId).filter(id => id != null);
+
+    // Get the latest sprint for this project
+    const sprints = await partnerSprint.find({ projectId: projectId }).sort({ createdAt: -1 }).limit(1).lean();
+    
+    if (!sprints || sprints.length === 0) {
+      return res.status(404).json({ sprintWork: [], msg: "Sprint not found" });
+    }
+    
+    const latestSprint = sprints[0];
+    const [users, config, flow] = await Promise.all([
+      User.find({ _id: { $in: projectUserIds } }).select('_id profile email').lean(),
+      TicketConfig.findOne({ projectId: projectId }).lean(),
+      ScrumProjectFlow.findOne({ projectId: projectId }).lean(),
+    ]);
+
+    const userFilter = (users || []).map(u => ({
+      value: u._id,
+      label: `${u.profile?.firstName || ''} ${u.profile?.lastName || ''}`.trim() || u.email
+    }));
+
+    const labelFilter = (config?.labels || []).map(l => ({
+      value: l.id,
+      label: l.name
+    }));
+
+    const priorityFilter = (config?.priorities || []).map(p => ({
+      value: p.id,
+      label: p.name
+    }));
+
+    const statusFilter = (flow?.columns || []).map(c => ({
+      value: c.name, // Using name as value for status filtering as per typical dashboard needs
+      label: c.name
+    }));
+
+    const allUserFilterAction = { 
+      assignee: userFilter, 
+      status: statusFilter, 
+      label: labelFilter, 
+      priority: priorityFilter 
+    };
+    // Query tickets by BOTH sprint ID AND project ID to ensure correct filtering
+    const sprintWork = await TicketModel.find({ 
+      sprint: latestSprint.id,
+      projectId: projectId 
+    }).lean();  
+    const totalStoryPoint = sprintWork.reduce((acc, currElem) => acc + (currElem.storyPoint || 0), 0);
+    
+    const updatedSprintWork = await Promise.all(
+    sprintWork.map(async (currElem) => {
+    const user = await getUserDetailById(currElem.assignee); 
+    const ticketConfig = await TicketConfig.findOne({ projectId: projectId });
+    // const ticketType = ticketConfig?.ticketTypes?.find((ticketType) => ticketType.id === currElem.typeId);
+    const ticketPriority = ticketConfig?.priorities?.find((ticketPriority) => ticketPriority.id === currElem.priority[0]);
+    const ticketLabel = ticketConfig?.labels?.find((ticketLabel) => ticketLabel.id === currElem.labels[0]);
+    const project = await ProjectModel.findOne({ projectId: projectId });
+    return {
+      ...currElem,
+      assignee: user?.name || 'Unassigned',
+      // ticketType: ticketType?.name || 'Unassigned',
+      priority: ticketPriority?.name || [],
+      labels: ticketLabel?.name || [],
+      projectName: project?.projectName || ''
+    };
+  })
+);
+
+    return res.status(200).json({
+      success: true,
+      sprintName:latestSprint?.sprintName || "",
+      totalStoryPoint:totalStoryPoint,
+      sprintWork: updatedSprintWork,
+      allUserFilterAction:allUserFilterAction,
+      msg: "Success fetch sprint work",
+    });
+  } catch (error) {
+    console.error("getCurrentProjectSprintWork error:", error);
     return res.status(500).json({ msg: "Something went wrong" });
   }
 

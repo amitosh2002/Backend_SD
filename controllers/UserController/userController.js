@@ -8,7 +8,8 @@ import { analyzeCurrentWeekAndMonthLogs } from "../../utility/platformUtility.js
 
 export const getUserRescentWork = async (req, res) => {
    
-    const { userId } = req.body; 
+    // const { userId } = req.body;
+    const userId= req.user.userId;
     if (!userId) {
         return res.status(400).json({ msg: "User ID is required" });
     }
@@ -77,7 +78,8 @@ export const getUserRescentWork = async (req, res) => {
 
 
 export const getUserTimeLog = async (req, res) => {
-    const { userId } = req.body; 
+    // const { userId } = req.body; 
+    const userId= req.user.userId;
 
     if (!userId) {
         return res.status(401).json({ msg: "User ID is required" });

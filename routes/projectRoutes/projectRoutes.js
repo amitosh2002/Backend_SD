@@ -26,7 +26,7 @@ projectRoutes.post("/v1/projects/manage",authenticateToken,projectMemberControll
 
 
 //=================user analytics===========
-projectRoutes.get('/v1/user-projects/getAll',authenticateToken,getUserAnalyticsAgg)
+projectRoutes.post('/v1/user-projects/getAll',authenticateToken,getUserAnalyticsAgg)
 
 //===============services=============
 projectRoutes.get('/v1/user-projects/services/bump',authenticateToken,HoraProjectServicesV1)
