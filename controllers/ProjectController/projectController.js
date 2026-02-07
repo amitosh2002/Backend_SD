@@ -107,7 +107,7 @@ const newProject = new ProjectModel({
       // don't block project creation on board/flow creation failure
     }
 
-    res.status(201).json({ message: 'Project created successfully', project: newProject });
+    res.status(201).json({ message: 'Project created successfully', project: newProject ,status:201});
   } catch (error) {
     console.error('Error creating project:', error);
     res.status(500).json({ message: 'Internal server error' });

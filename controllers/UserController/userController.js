@@ -254,7 +254,8 @@ export const getUserWorkDetails = async (req, res) => {
                 label: labelObj ? labelObj.name : "Unknown",
                 priority: priorityObj ? priorityObj.name : "Unknown",
                 timeLogs: item.timeLogs,
-                totalTimeLogged: item.totalTimeLogged
+                totalTimeLogged: item.totalTimeLogged,
+                id: item._id
             };
         };
 
@@ -275,3 +276,46 @@ export const getUserWorkDetails = async (req, res) => {
         });
     }
 };
+
+
+const getUserCalanderTimeline = async(req,res)=>{
+    try {
+
+        const userId = req.user.userId;
+
+
+        const userWorkingProject = await UserWorkAccess.find({
+            projectId,
+            userId,
+            status:"accepted"  }).lean();
+
+
+        const projectIds = userWorkingProject.map(project => project.projectId);
+
+        // =====================================USER TICKET ETA ============
+        const ticketETA = await TicketModel.aggregate([
+            {
+                $match: {
+                    projectId: { $in: projectIds },
+                    assignee: userId
+                }
+            },
+            {
+                $group: {
+                    _id: "$ticketKey",
+                    eta: { $max: "$eta" }
+                }
+            }
+        ]);
+
+
+
+
+
+        // =====================================USER TICKET ETA ============
+
+        
+    } catch (error) {
+        
+    }
+}
