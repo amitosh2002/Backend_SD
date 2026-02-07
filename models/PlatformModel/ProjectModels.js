@@ -64,6 +64,19 @@ const Projects = new mongoose.Schema({
       altText: String,
     },
   ],
+services: [{
+    serviceId: {
+      type: mongoose.Schema.Types.ObjectId, // This is crucial for linking
+      ref: 'Service', // MUST match the name: mongoose.model('Service', ...)
+      required: true
+    },
+    // Optional: Add extra metadata if needed (e.g., date added)
+    addedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+
   createdAt: {
     type: Date,
     default: Date.now,
