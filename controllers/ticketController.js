@@ -1070,7 +1070,7 @@ export const getCurrentProjectSprintWork=async(req,res)=>{
     const projectUserIds = allProjectAccess.map(a => a.userId).filter(id => id != null);
 
     // Get the latest sprint for this project
-    const sprints = await partnerSprint.find({ projectId: projectId }).sort({ createdAt: -1 }).limit(1).lean();
+    const sprints = await partnerSprint.find({ projectId: projectId ,status: "ACTIVE"}).sort({ createdAt: -1 }).limit(1).lean();
     
     if (!sprints || sprints.length === 0) {
       return res.status(404).json({ sprintWork: [], msg: "Sprint not found" });
