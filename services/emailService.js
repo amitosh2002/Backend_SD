@@ -37,81 +37,23 @@ const getStatusColor = (status = "") => {
   return map[status.toLowerCase()] || "#718096";
 };
 
-
-
-const getFromEmail = () => {
-  const region = process.env.SMTP_REGION;
-
-  if (region === "STAGING" || region === "PROD" || region === "production" || process.env.NODE_ENV === "production") {
-    return process.env.RESEND_FROM_EMAIL;
-  }
-
-  if (region === "PROD") {
-    return process.env.MAIL_FROM;
-  }
-
-  // LOCAL / default (Gmail)
-  return process.env.EMAIL_USER;
-};
-
-
 /* ---------------------------------- */
 /* Core Send Email (SINGLE ENTRY)     */
 /* ---------------------------------- */
-// const sendEmail = async (to, subject, text, html) => {
-//   try {
-//     const region = process.env.SMTP_REGION || "LOCAL";
-
-
-//     if (!getFromEmail) {
-//       throw new Error("MAIL_FROM / EMAIL_USER not configured");
-//     }
-
-//     console.log(
-//       `[sendEmail] region=${region} | to=${to} | subject=${subject}`
-//     );
-
-//     const mailOptions = {
-//       from: `${getFromEmail}`,
-//       // from: `"Hora" <${getFromEmail}>`,
-
-//       to,
-//       subject,
-//       text,
-//       html,
-//     };
-
-//     const result = await transporter.sendMail(mailOptions);
-
-//     console.log(
-//       `[sendEmail] SUCCESS | provider=${region} | messageId=${result.messageId}`
-//     );
-
-//     return {
-//       success: true,
-//       messageId: result.messageId,
-//       provider: region,
-//     };
-//   } catch (error) {
-//     console.error("[sendEmail] FAILED:", error);
-//     return { success: false, error: error.message };
-//   }
-// };
 const sendEmail = async (to, subject, text, html) => {
   try {
-    const region = process.env.SMTP_REGION || "LOCAL";
-    const fromEmail = getFromEmail();
+    const fromEmail = transporter.from;
 
     if (!fromEmail) {
-      throw new Error("MAIL_FROM / EMAIL_USER not configured");
+      throw new Error(`Email sender not configured (Mode: ${transporter.type})`);
     }
 
     console.log(
-      `[sendEmail] region=${region} | from=${fromEmail} | to=${to} | subject=${subject}`
+      `[sendEmail] ${transporter.type} | Provider: ${transporter.provider} | From: ${fromEmail} | To: ${to} | Subject: ${subject}`
     );
 
     const mailOptions = {
-      from: fromEmail, // ✅ CORRECT
+      from: fromEmail,
       to,
       subject,
       text,
@@ -121,17 +63,18 @@ const sendEmail = async (to, subject, text, html) => {
     const result = await transporter.sendMail(mailOptions);
 
     console.log(
-      `[sendEmail] SUCCESS | provider=${region} | messageId=${result.messageId}`
+      `[sendEmail] SUCCESS | MsgId: ${result.messageId}`
     );
 
     return {
       success: true,
       messageId: result.messageId,
-      provider: region,
+      provider: transporter.provider,
+      mode: transporter.type
     };
   } catch (error) {
-    console.error("[sendEmail] FAILED:", error);
-    return { success: false, error: error.message };
+    console.error(`[sendEmail] FAILED (${transporter.provider}):`, error.message || error);
+    return { success: false, error: error.message || "Email delivery failed" };
   }
 };
 
