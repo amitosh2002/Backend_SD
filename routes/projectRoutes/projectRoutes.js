@@ -1,5 +1,5 @@
 import { validateToken } from '../../controllers/authController.js';
-import { acceptInvitataion, addSerivceToProjectV1, createProject, deleteProject, getAllRunningProjectServicebyProjectId, getProjectById, getUserAnalyticsAgg, HoraProjectServicesV1, invitationDetails, inviteUserToProject, listUserAccessibleProjects, projectMemberController, ticketConfigurator, updateProject, updateServiceStatus, userWithProjectRights } from '../../controllers/ProjectController/projectController.js';
+import { acceptInvitataion, addSerivceToProjectV1, checkValidPartnerCode, createProject, deleteProject, getAllRunningProjectServicebyProjectId, getProjectById, getUserAnalyticsAgg, HoraProjectServicesV1, invitationDetails, inviteUserToProject, listUserAccessibleProjects, projectMemberController, ticketConfigurator, updateProject, updateServiceStatus, userWithProjectRights } from '../../controllers/ProjectController/projectController.js';
 
 
 // const express = require('express');
@@ -23,6 +23,7 @@ projectRoutes.post('/v1/invite/invitation-accept', acceptInvitataion);
 
 projectRoutes.post("/v1/projects/:projectId/config",authenticateToken,ticketConfigurator)
 projectRoutes.post("/v1/projects/manage",authenticateToken,projectMemberController)
+projectRoutes.post("/v1/partnerCode/check",authenticateToken,checkValidPartnerCode)
 
 
 //=================user analytics===========
