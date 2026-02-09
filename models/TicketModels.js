@@ -21,7 +21,7 @@ const TicketSchema = new mongoose.Schema(
      partnerId: {
         type: String,
         ref: 'Partner', // Reference your Partner model
-        required: [true, "Partner ID is required for the ticket context"],
+        // required: [true, "Partner ID is required for the ticket context"],
         index: true,
     },
     projectId: {

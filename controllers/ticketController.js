@@ -788,17 +788,20 @@ export const getTicketByKey = async (req, res) => {
 };
 
 export const previewTicketKey = async (req, res) => {
+  console.log("[previewTicketKey] Request query:", JSON.stringify(req.query));
   try {
     const { type, title, projectId } = req.query;
     if (!type || !title || !projectId) {
+      console.warn("[previewTicketKey] Missing required fields");
       return res
         .status(400)
         .json({ message: "'type', 'title', and 'projectId' are required" });
     }
     const key = await TicketModel.getNextTicketKey(projectId, type, title);
+    console.log("[previewTicketKey] Previewed key:", key);
     return res.status(200).json({ key });
   } catch (err) {
-    console.error("Error previewing ticket key:", err);
+    console.error("[previewTicketKey] Error:", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -905,9 +908,9 @@ export const getTicketByQuery = async (req, res) => {
 
 export const addStoryPoint = async (req, res) => {
   const {  storyPoint } = req.body;
-  // 1. Input Validation Check
+  console.log("[addStoryPoint] Request body:", JSON.stringify(req.body));
   if (!storyPoint.userId || storyPoint === undefined || !storyPoint.ticketId) {
-    // Note: storyPoint might be 0, so check against undefined/null, not just falsy value
+    console.warn("[addStoryPoint] Missing required fields");
     return res.status(400).json({ 
       message: "Missing required fields: userId, storyPoint, or ticketId.",
       success: false
@@ -915,23 +918,21 @@ export const addStoryPoint = async (req, res) => {
   }
 
   try {
-    // Use TicketId directly and pass the update object correctly.
-    // { new: true } option ensures the function returns the updated document.
     const updatedTicket = await TicketModel.findByIdAndUpdate(
       storyPoint.ticketId,
-      { storyPoint: storyPoint.point }, // The update object
-      { new: true } // Return the new, modified document
+      { storyPoint: storyPoint.point }, 
+      { new: true } 
     );
 
-    // 3. Check if ticket was found and updated
     if (!updatedTicket) {
+      console.warn("[addStoryPoint] Ticket not found:", storyPoint.ticketId);
       return res.status(404).json({
         message: `Ticket with ID ${storyPoint.ticketId} not found.`,
         success: false
       });
     }
 
-    // adding logs for ticket update
+    console.log("[addStoryPoint] Story point updated for ticket:", updatedTicket.ticketKey);
     await ActivityLog.create(
       {
         userId:storyPoint.userId,
@@ -944,7 +945,6 @@ export const addStoryPoint = async (req, res) => {
         },
       }
     )
-    // 4. Success Response
     return res.status(200).json({
       message: "Story point successfully added/updated.",
       success: true,
@@ -952,8 +952,7 @@ export const addStoryPoint = async (req, res) => {
     });
 
   } catch (error) {
-    // 5. Error Handling
-    console.error("Error updating story point:", error);
+    console.error("[addStoryPoint] Error:", error);
     return res.status(500).json({
       message: "Internal server error during update.",
       success: false,
@@ -966,8 +965,10 @@ export const addStoryPoint = async (req, res) => {
 //Fetchiing the activity log for each ticket
 export const getWorkLogActivity = async (req, res) => {
   const { ticketId } = req.body;
+  console.log("[getWorkLogActivity] Request for ticketId:", ticketId);
 
   if (!ticketId) {
+    console.warn("[getWorkLogActivity] ticketId missing");
     return res.status(400).json({ msg: "Ticket id required" });
   }
 
@@ -975,6 +976,8 @@ export const getWorkLogActivity = async (req, res) => {
     const ticketLogs = await ActivityLog.find({ targetId: ticketId })
       .sort({ createdAt: -1 })
       .lean();
+
+    console.log("[getWorkLogActivity] Found", ticketLogs.length, "activity logs");
 
     const updatedLog = await Promise.all(
       ticketLogs.map(async (currElem) => {
@@ -992,7 +995,7 @@ export const getWorkLogActivity = async (req, res) => {
       msg: "Success fetch logs",
     });
   } catch (error) {
-    console.error("getWorkLogActivity error:", error);
+    console.error("[getWorkLogActivity] Error:", error);
     return res.status(500).json({ msg: "Something went wrong" });
   }
 };
@@ -1000,16 +1003,18 @@ export const getWorkLogActivity = async (req, res) => {
 
 // this controller is for status values for filtering tickets
 export const getSortKeyValues= async (req,res)=>{
-
+  const userId = req.user.userId;
+  console.log("[getSortKeyValues] Request received for userId:", userId);
   try {
-
-    const userId = req.user.userId;
     const userWorkAccess = await UserWorkAccess.find({ userId: userId });
 
     if (!userWorkAccess || userWorkAccess.length === 0) {
+      console.warn("[getSortKeyValues] User work access not found for userId:", userId);
       return res.status(404).json({ msg: "User not found" });
     }
     const projectIds = userWorkAccess.map(userWorkAccess => userWorkAccess.projectId);
+    console.log("[getSortKeyValues] User has access to projects:", projectIds);
+
     const allWorkingUsers = await UserWorkAccess.find({ projectId: { $in: projectIds } });
     const allUsers = await User.find({ _id: { $in: allWorkingUsers.map(allWorkingUsers => allWorkingUsers.userId) } }).select('_id profile email');
     const workFLow = await ScrumProjectFlow.find({ projectId: { $in: projectIds } });
@@ -1021,15 +1026,12 @@ export const getSortKeyValues= async (req,res)=>{
             }).select('projectId projectName').lean();
 
     const ticketConfig= await TicketConfig.find({ projectId: { $in: projectIds } });
-    console.log(ticketConfig,"ticketConfig")
-    // const uniqueLabels = [...new Set(ticketConfig.map(ticketConfig => ticketConfig.labels.select("id color name")).flat())];
-    // const uniquePriority = [...new Set(ticketConfig.map(ticketConfig => ticketConfig.priorities).flat())];
-    // const uniqueTicketConvenstion = [...new Set(ticketConfig.map(ticketConfig => ticketConfig.conventions).flat())];
-const uniqueLabels = getCleanUniqueItems(ticketConfig, 'labels', ['id', 'name', 'color']);
+    
+    const uniqueLabels = getCleanUniqueItems(ticketConfig, 'labels', ['id', 'name', 'color']);
+    const uniquePriority = getCleanUniqueItems(ticketConfig, 'priorities', ['id', 'name', 'color']);
+    const uniqueTicketConvention = getCleanUniqueItems(ticketConfig, 'conventions', ['id',  'color', 'suffix']);
 
-const uniquePriority = getCleanUniqueItems(ticketConfig, 'priorities', ['id', 'name', 'color']);
-
-const uniqueTicketConvention = getCleanUniqueItems(ticketConfig, 'conventions', ['id',  'color', 'suffix']);
+    console.log("[getSortKeyValues] Successfully aggregated sort keys. StatusCount:", uniqueStatus.length, "UsersCount:", uniqueUsers.length);
 
     return res.status(200).json({
       success: true,
@@ -1042,41 +1044,42 @@ const uniqueTicketConvention = getCleanUniqueItems(ticketConfig, 'conventions', 
       msg: "Success fetch sort key values",
     });
   } catch (error) {
-    console.error("getSortKeyValues error:", error);
+    console.error("[getSortKeyValues] Error:", error);
     return res.status(500).json({ msg: "Something went wrong" });
   }
-
 }
 
 
-export const getCurrentProjectSprintWork=async(req,res)=>{
-
+export const getCurrentProjectSprintWork = async(req,res)=>{
+  const userId = req.user.userId;
+  const {projectId} = req.query;
+  console.log("[getCurrentProjectSprintWork] Request for userId:", userId, "projectId:", projectId);
   try {
-    const userId = req.user.userId;
-    const {projectId}=req.query;
     if(!projectId){
+      console.warn("[getCurrentProjectSprintWork] projectId missing");
       return res.status(400).json({ msg: "Project id required" });
     }
-    // const
-    // Verify requesting user has access to the project
+
     const currentUserAccess = await UserWorkAccess.findOne({ userId: userId, projectId: projectId });
 
     if (!currentUserAccess) {
+      console.warn("[getCurrentProjectSprintWork] Access denied for user:", userId, "to project:", projectId);
       return res.status(403).json({ msg: "Access denied to this project" });
     }
     
-    // Get all users who have accepted access to this project
     const allProjectAccess = await UserWorkAccess.find({ projectId: projectId, status: "accepted" }).lean();
     const projectUserIds = allProjectAccess.map(a => a.userId).filter(id => id != null);
 
-    // Get the latest sprint for this project
     const sprints = await partnerSprint.find({ projectId: projectId ,status: "ACTIVE"}).sort({ createdAt: -1 }).limit(1).lean();
     
     if (!sprints || sprints.length === 0) {
+      console.log("[getCurrentProjectSprintWork] No active sprints found for project:", projectId);
       return res.status(404).json({ sprintWork: [], msg: "Sprint not found" });
     }
     
     const latestSprint = sprints[0];
+    console.log("[getCurrentProjectSprintWork] Found active sprint:", latestSprint.sprintName);
+
     const [users, config, flow] = await Promise.all([
       User.find({ _id: { $in: projectUserIds } }).select('_id profile email').lean(),
       TicketConfig.findOne({ projectId: projectId }).lean(),
@@ -1099,7 +1102,7 @@ export const getCurrentProjectSprintWork=async(req,res)=>{
     }));
 
     const statusFilter = (flow?.columns || []).map(c => ({
-      value: c.name, // Using name as value for status filtering as per typical dashboard needs
+      value: c.name, 
       label: c.name
     }));
 
@@ -1109,32 +1112,33 @@ export const getCurrentProjectSprintWork=async(req,res)=>{
       label: labelFilter, 
       priority: priorityFilter 
     };
-    // Query tickets by BOTH sprint ID AND project ID to ensure correct filtering
+
     const sprintWork = await TicketModel.find({ 
       sprint: latestSprint.id,
       projectId: projectId 
     }).lean();  
+    console.log("[getCurrentProjectSprintWork] Found", sprintWork.length, "tickets in sprint");
+
     const totalStoryPoint = sprintWork.reduce((acc, currElem) => acc + (currElem.storyPoint || 0), 0);
     
     const updatedSprintWork = await Promise.all(
     sprintWork.map(async (currElem) => {
-    const user = await getUserDetailById(currElem.assignee); 
-    const ticketConfig = await TicketConfig.findOne({ projectId: projectId });
-    // const ticketType = ticketConfig?.ticketTypes?.find((ticketType) => ticketType.id === currElem.typeId);
-    const ticketPriority = ticketConfig?.priorities?.find((ticketPriority) => ticketPriority.id === currElem.priority[0]);
-    const ticketLabel = ticketConfig?.labels?.find((ticketLabel) => ticketLabel.id === currElem.labels[0]);
-    const project = await ProjectModel.findOne({ projectId: projectId });
-    return {
-      ...currElem,
-      assignee: user?.name || 'Unassigned',
-      // ticketType: ticketType?.name || 'Unassigned',
-      priority: ticketPriority?.name || [],
-      labels: ticketLabel?.name || [],
-      projectName: project?.projectName || ''
-    };
-  })
-);
+      const user = await getUserDetailById(currElem.assignee); 
+      const ticketConfig = await TicketConfig.findOne({ projectId: projectId });
+      const ticketPriority = ticketConfig?.priorities?.find((ticketPriority) => ticketPriority.id === currElem.priority[0]);
+      const ticketLabel = ticketConfig?.labels?.find((ticketLabel) => ticketLabel.id === currElem.labels[0]);
+      const project = await ProjectModel.findOne({ projectId: projectId });
+      return {
+        ...currElem,
+        assignee: user?.name || 'Unassigned',
+        priority: ticketPriority?.name || [],
+        labels: ticketLabel?.name || [],
+        projectName: project?.projectName || ''
+      };
+    })
+  );
 
+    console.log("[getCurrentProjectSprintWork] Successfully processed sprint work for:", latestSprint.sprintName);
     return res.status(200).json({
       success: true,
       sprintName:latestSprint?.sprintName || "",
@@ -1144,8 +1148,7 @@ export const getCurrentProjectSprintWork=async(req,res)=>{
       msg: "Success fetch sprint work",
     });
   } catch (error) {
-    console.error("getCurrentProjectSprintWork error:", error);
+    console.error("[getCurrentProjectSprintWork] Error:", error);
     return res.status(500).json({ msg: "Something went wrong" });
   }
-
 }

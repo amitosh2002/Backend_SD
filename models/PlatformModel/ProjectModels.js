@@ -13,7 +13,7 @@ const Projects = new mongoose.Schema({
   partnerId: {
     type:String,
     ref: 'Partner',
-    required: true,
+    // required: true,
     index: true, // Important for filtering partner's projects
   },
   projectName: {
@@ -23,7 +23,7 @@ const Projects = new mongoose.Schema({
   },
   partnerCode: {
     type: String,
-    required: true,
+    // required: true,
     trim: true,
   },
   teamSize:{
