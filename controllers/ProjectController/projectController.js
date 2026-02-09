@@ -56,11 +56,11 @@ export const createProject = async (req, res) => {
     const user = await User.findById(userId);
     // check the partnerDetails
     const checkPartner = await PartnerModel.findOne({
-      email:user.email
+      email:user?.email
     })
     // check user acces for the project
     const userAccess = await UserWorkAccess.findOne({
-      partnerId:checkPartner.partnerId
+      partnerId:checkPartner?.partnerId
     })
   
     // Create a new project instance
@@ -87,7 +87,7 @@ const newProject = new ProjectModel({
     await UserWorkAccess.create({
       userId:userId,
       projectId:newProject.projectId,
-      accessType:300,
+      accessType:400,
       partnerId:checkPartner ? checkPartner.partnerId : "",
       status:'accepted',
       invitedBy:userId,
@@ -362,11 +362,10 @@ export const inviteUserToProject = async (req, res) => {
       // Check existing invite
       const existingInvitation = await UserWorkAccess.findOne({
         projectId,
-        partnerId,
+        // partnerId,
         invitedEmail: email,
         status: "pending",
       });
-
       if (existingInvitation) {
         results.push({
           email,
@@ -1163,3 +1162,26 @@ export const updateServiceStatus = async (req, res) => {
 }
 
 
+//================================ Fetching partner code ===================================
+
+export const checkValidPartnerCode = async (req, res) => {
+  try {
+    const { partnerCode } = req.body;
+    // checking that partner code is valid or not 
+    const partner = await PartnerModel.findOne({partnerCode});
+    if (!partner) {
+      return res.status(404).json({ success: false, msg: "No partner found!" });
+    }
+    return res.status(200).json({
+      success: true,
+      data: partner.partnerCode,
+      msg: "Partner code checked successfully"
+    });
+  } catch (error) {
+    console.error("checkValidPartnerCode Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error while checking partner code." 
+    });
+  }
+}

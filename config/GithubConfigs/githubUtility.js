@@ -4,6 +4,7 @@ import { Octokit } from "@octokit/rest";
 import path from "path";
 // get github Client id
 import { fileURLToPath } from "url";
+import axios from "axios";
 const APP_ID=process.env.GITHUB_CLIENT_ID
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,12 +19,15 @@ const PRIVATE_KEY = fs.readFileSync(
 
 // utility to create the token 
 export function getGitJWTToken(){
+    console.log("[getGitJWTToken] Generating JWT...");
     const payload={
          iat: Math.floor(Date.now() / 1000) - 60,
         exp: Math.floor(Date.now() / 1000) + 600,
         iss:APP_ID
     }
-    return jwt.sign(payload,PRIVATE_KEY,{algorithm:"RS256"})
+    const token = jwt.sign(payload,PRIVATE_KEY,{algorithm:"RS256"});
+    console.log("[getGitJWTToken] JWT generated successfully");
+    return token;
 }
 
 // utility to get the installation id
@@ -37,12 +41,15 @@ export function getGitInstallationId(){
  * @returns {string}
  */
 export function getGithubAuthUrl(projectId) {
+  console.log("[getGithubAuthUrl] Generating Auth URL for project:", projectId);
   const clientID = process.env.GITHUB_CLIENT_ID;
   const redirectUri = `${process.env.BACKEND_URL || 'http://localhost:8000'}/api/auth/github/callback`;
   // State can include projectId to know which project to update upon callback
   const state = encodeURIComponent(JSON.stringify({ projectId }));
   
-  return `https://github.com/login/oauth/authorize?client_id=${clientID}&redirect_uri=${redirectUri}&state=${state}&scope=repo,user`;
+  const url = `https://github.com/login/oauth/authorize?client_id=${clientID}&redirect_uri=${redirectUri}&state=${state}&scope=repo,user`;
+  console.log("[getGithubAuthUrl] Generated URL:", url);
+  return url;
 }
 
 /**
@@ -51,28 +58,36 @@ export function getGithubAuthUrl(projectId) {
  * @returns {Promise<string>}
  */
 export async function exchangeCodeForToken(code) {
+  console.log("[exchangeCodeForToken] Exchanging code for token...");
   const clientID = process.env.GITHUB_CLIENT_ID;
   const clientSecret = process.env.GITHUB_CLIENT_SECRET;
 
-  const response = await fetch('https://github.com/login/oauth/access_token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
-    body: JSON.stringify({
-      client_id: clientID,
-      client_secret: clientSecret,
-      code: code,
-    }),
-  });
+  try {
+    const response = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: clientID,
+        client_secret: clientSecret,
+        code: code,
+      }),
+    });
 
-  const data = await response.json();
-  if (data.error) {
-    throw new Error(`GitHub OAuth error: ${data.error_description || data.error}`);
+    const data = await response.json();
+    if (data.error) {
+      console.error("[exchangeCodeForToken] GitHub OAuth error:", data.error_description || data.error);
+      throw new Error(`GitHub OAuth error: ${data.error_description || data.error}`);
+    }
+
+    console.log("[exchangeCodeForToken] Token exchanged successfully");
+    return data.access_token;
+  } catch (error) {
+    console.error("[exchangeCodeForToken] Error exchanging code:", error.message);
+    throw error;
   }
-
-  return data.access_token;
 }
 
 async function getInstallationToken(installationId) {
@@ -112,8 +127,12 @@ import crypto from 'crypto';
 import GithubInstallationModel from "../../models/PlatformModel/GithubInstallationModel.js";
 
 export function verifyGithubSignature(req) {
+  console.log("[verifyGithubSignature] Verifying signature...");
   const signature = req.headers['x-hub-signature-256'];
-  if (!signature) return false;
+  if (!signature) {
+    console.warn("[verifyGithubSignature] No signature found in headers");
+    return false;
+  }
 
   const payload = req.body;
 
@@ -124,10 +143,13 @@ export function verifyGithubSignature(req) {
 
   const expected = `sha256=${hmac}`;
 
-  return crypto.timingSafeEqual(
+  const isValid = crypto.timingSafeEqual(
     Buffer.from(signature),
     Buffer.from(expected)
   );
+
+  console.log("[verifyGithubSignature] Signature valid:", isValid);
+  return isValid;
 }
 
 
@@ -194,6 +216,7 @@ async function handlePushEvent(payload) {
 
 
 export async function getInstallationAccessToken(installationId) {
+  console.log("[getInstallationAccessToken] Fetching token for installation:", installationId);
   // 1️⃣ Create JWT
   const jwtToken = jwt.sign(
     {
@@ -205,19 +228,25 @@ export async function getInstallationAccessToken(installationId) {
     { algorithm: "RS256" }
   );
 
-  // 2️⃣ Exchange for installation token
-  const response = await axios.post(
-    `https://api.github.com/app/installations/${installationId}/access_tokens`,
-    {},
-    {
-      headers: {
-        Authorization: `Bearer ${jwtToken}`,
-        Accept: "application/vnd.github+json"
+  try {
+    // 2️⃣ Exchange for installation token
+    const response = await axios.post(
+      `https://api.github.com/app/installations/${installationId}/access_tokens`,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${jwtToken}`,
+          Accept: "application/vnd.github+json"
+        }
       }
-    }
-  );
+    );
 
-  return response.data.token;
+    console.log("[getInstallationAccessToken] Token fetched successfully");
+    return response.data.token;
+  } catch (error) {
+    console.error("[getInstallationAccessToken] Error fetching installation token:", error.response?.data || error.message);
+    throw error;
+  }
 }
 
 export {
@@ -228,24 +257,34 @@ export {
 }
 
 export async function getUserRepos(userId) {
-  const installation = await GithubInstallationModel.findOne({ userId });
-  if (!installation) throw new Error("GitHub not connected");
-
-  const token = await getInstallationAccessToken(
-    installation.installationId
-  );
-
-  const res = await axios.get(
-    "https://api.github.com/installation/repositories",
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json"
-      }
+  console.log("[getUserRepos] Fetching repos for user:", userId);
+  try {
+    const installation = await GithubInstallationModel.findOne({ userId });
+    if (!installation) {
+      console.warn("[getUserRepos] GitHub not connected for user:", userId);
+      throw new Error("GitHub not connected");
     }
-  );
 
-  return res.data.repositories;
+    const token = await getInstallationAccessToken(
+      installation.installationId
+    );
+
+    const res = await axios.get(
+      "https://api.github.com/installation/repositories",
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json"
+        }
+      }
+    );
+
+    console.log("[getUserRepos] Successfully fetched", res.data.repositories.length, "repositories");
+    return res.data.repositories;
+  } catch (error) {
+    console.error("[getUserRepos] Error fetching repos:", error.message);
+    throw error;
+  }
 }
 
 
