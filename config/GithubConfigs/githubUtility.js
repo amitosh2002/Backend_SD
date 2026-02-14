@@ -5,7 +5,7 @@ import path from "path";
 // get github Client id
 import { fileURLToPath } from "url";
 import axios from "axios";
-const APP_ID=process.env.GITHUB_CLIENT_ID
+const APP_ID=process.env.GITHUB_APP_ID
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,7 +15,7 @@ const PRIVATE_KEY = fs.readFileSync(
   "utf8"
 );
 
-
+// ==== new flow actions =======
 
 // utility to create the token 
 export function getGitJWTToken(){
@@ -29,6 +29,29 @@ export function getGitJWTToken(){
     console.log("[getGitJWTToken] JWT generated successfully");
     return token;
 }
+
+
+
+
+
+
+// export async function getInstallationAccessToken(installationId) {
+//   const jwtToken = getGitJWTToken();
+
+//   const octokit = new Octokit({
+//     auth: jwtToken,
+//   });
+
+//   const { data } = await octokit.apps.createInstallationAccessToken({
+//     installation_id: installationId,
+//   });
+
+//   return data.token; // 👈 THIS is the real token you use later
+// }
+
+
+
+// ==== new flow actions =======
 
 // utility to get the installation id
 export function getGitInstallationId(){
@@ -124,7 +147,8 @@ async function listRepos(installationToken) {
 
 // ==============??
 import crypto from 'crypto';
-import GithubInstallationModel from "../../models/PlatformModel/GithubInstallationModel.js";
+import GithubInstallationModel from "../../models/GithubModels/GithubInstallationModel.js";
+// import GithubInstallationModel from "../../models/PlatformModel/GithubInstallationModel.js";
 
 export function verifyGithubSignature(req) {
   console.log("[verifyGithubSignature] Verifying signature...");
@@ -214,6 +238,10 @@ async function handlePushEvent(payload) {
 }
 
 
+// ===================== APP Version helper =====
+
+
+
 
 export async function getInstallationAccessToken(installationId) {
   console.log("[getInstallationAccessToken] Fetching token for installation:", installationId);
@@ -247,6 +275,30 @@ export async function getInstallationAccessToken(installationId) {
     console.error("[getInstallationAccessToken] Error fetching installation token:", error.response?.data || error.message);
     throw error;
   }
+}
+
+
+export async function getCommitStatus({
+  owner,
+  repo,
+  sha,
+  installationToken
+}) {
+  const res = await axios.get(
+    `https://api.github.com/repos/${owner}/${repo}/commits/${sha}/status`,
+    {
+      headers: {
+        Authorization: `Bearer ${installationToken}`,
+        Accept: "application/vnd.github+json",
+      },
+    }
+  );
+
+  return {
+    state: res.data.state, // success | failure | pending
+    total: res.data.total_count,
+    statuses: res.data.statuses,
+  };
 }
 
 export {

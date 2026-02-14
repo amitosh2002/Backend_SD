@@ -18,6 +18,7 @@ const GithubRepoSchema = new mongoose.Schema({
     id: String,
     login: String,
     type: String,
+    avatarUrl: String,
   },
   htmlUrl: String,
   cloneUrl: String,
@@ -39,16 +40,18 @@ const GithubRepoSchema = new mongoose.Schema({
     type: String,
     index: true,
     ref: 'Partner',
+    default:"WEBSITE"
   },
   projectId: {
     type: String,
     index: true,
     ref: 'Projects',
+    required: true,
   },
 
   // Who connected this repo (userId)
   connectedBy: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: String,
     ref: 'User',
   },
 
