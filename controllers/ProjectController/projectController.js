@@ -1212,8 +1212,8 @@ export const projectInsightController = async(req,res)=>{
       return res.status(404).json({ success: false, msg: "No project found!" });
     }
 
-    const [projectBoard, tickets, users, allConfig] = await Promise.all([
-      SprintBoardConfig.find({ projectId }),
+    const [projectFlow, tickets, users, allConfig] = await Promise.all([
+      ScrumProjectFlow.findOne({ projectId, isActive: true }).lean(),
       TicketModel.find({ projectId }),
       UserWorkAccess.find({ projectId }),
       TicketConfig.findOne({ projectId })
@@ -1252,7 +1252,9 @@ export const projectInsightController = async(req,res)=>{
       };
     }));
 
-    const projectBoardWithTickets = projectBoard[0]?.columns?.map((column) => {
+    // Distribute tasks into board flow columns
+    const boardColumns = projectFlow?.columns || [];
+    const projectBoardWithTickets = boardColumns.map((column) => {
       const columnTickets = ticketsData.filter(ticket =>
         column.statusKeys.includes(ticket.status)
       );
@@ -1261,14 +1263,15 @@ export const projectInsightController = async(req,res)=>{
         Status: column.statusKeys,
         tickets: columnTickets
       }
-    }) || [];
+    });
 
-    const taskStatusOverview = ticketsData.reduce((acc, ticket) => {
-      const status = ticket.status;
-      if (!acc[status]) {
-        acc[status] = 0;
-      }
-      acc[status]++;
+    // Group status overview by column names for a cleaner dashboard view
+    const taskStatusOverview = boardColumns.reduce((acc, column) => {
+      const columnTicketsCount = ticketsData.filter(ticket => 
+        column.statusKeys.includes(ticket.status)
+      ).length;
+      
+      acc[column.name] = (acc[column.name] || 0) + columnTicketsCount;
       return acc;
     }, {});
     const teamMemberDetails = await Promise.all(
