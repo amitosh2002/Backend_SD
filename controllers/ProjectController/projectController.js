@@ -16,6 +16,8 @@ import { TicketModel } from "../../models/TicketModels.js";
 import { TicketConfig } from "../../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 import HoraServiceSchema from "../../models/HoraInternal/HoraServiceSchema.js";
 import ProjectService from "../../models/PlatformModel/ProjectServiceSchema.js";
+import ScrumProjectFlow from "../../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
+import SprintBoardConfig from "../../models/PlatformModel/SprintModels/confrigurator/sprintBoardModel.js";
 
 // import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
@@ -634,7 +636,7 @@ export const getSprintBoardFlowForProject = async (req, res) => {
     console.log("[SprintBoard] Fetching board for project:", projectId);
 
     // 1️⃣ Try project-specific board
-    let board = await SprintBoardConfigSchema.findOne({
+    let board = await SprintBoardConfig.findOne({
       projectId,
       isActive: true,
       workflowSource: "PROJECT",
@@ -643,7 +645,7 @@ export const getSprintBoardFlowForProject = async (req, res) => {
     // 2️⃣ Fallback to default board
     if (!board) {
       console.log("[SprintBoard] Project board not found, using default TEMPLATE");
-      board = await SprintBoardConfigSchema.findOne({
+      board = await SprintBoardConfig.findOne({
         projectId: "DEFAULT",
         isActive: true,
         workflowSource: "TEMPLATE",
@@ -1182,6 +1184,122 @@ export const checkValidPartnerCode = async (req, res) => {
     return res.status(500).json({ 
       success: false, 
       msg: "Internal server error while checking partner code." 
+    });
+  }
+}
+
+
+export const projectInsightController = async(req,res)=>{
+
+
+  try {
+    const {projectId} = req.body;
+    const userId=req.user.userId;
+
+    const haveRights = await UserWorkAccess.exists({
+      projectId: projectId,
+      userId: userId,
+      accessType: { $gte: 100 }
+    });
+
+    if (!haveRights) {
+      return res.status(403).json({ success: false, msg: "Insufficient permissions to manage services." });
+    }
+    console.log(haveRights,"haveRights")
+
+    const project = await ProjectModel.findOne({projectId});
+    if (!project) {
+      return res.status(404).json({ success: false, msg: "No project found!" });
+    }
+
+    const [projectBoard, tickets, users, allConfig] = await Promise.all([
+      SprintBoardConfig.find({ projectId }),
+      TicketModel.find({ projectId }),
+      UserWorkAccess.find({ projectId }),
+      TicketConfig.findOne({ projectId })
+    ]);
+
+    const ticketsData = await Promise.all(tickets.map(async (ticket) => {
+      const assignee = await getUserDetailById(ticket.assignee);
+
+      // Handle priorities and labels as they can be arrays in the schema
+      const priorityIds = Array.isArray(ticket.priority) ? ticket.priority : [ticket.priority];
+      const labelIds = Array.isArray(ticket.labels) ? ticket.labels : [ticket.labels];
+
+      const mappedPriorities = priorityIds
+        .map(id => allConfig?.priorities?.find(p => p.id === id))
+        .filter(Boolean);
+
+      const mappedLabels = labelIds
+        .map(id => allConfig?.labels?.find(l => l.id === id))
+        .filter(Boolean);
+
+      return {
+        ticketKey: ticket.ticketKey,
+        title: ticket.title,
+        status: ticket.status,
+        assignee: assignee.name,
+        assigneeImage: assignee.image,
+        reporter: ticket.reporter,
+        createdAt: ticket.createdAt,
+        updatedAt: ticket.updatedAt,
+        eta: ticket.eta,
+        // Include priority details
+        priority: mappedPriorities.length > 0 ? mappedPriorities[0].name : "",
+        priorityColor: mappedPriorities.length > 0 ? mappedPriorities[0].color : "#6b7280",
+        // Map labels with colors
+        labels: mappedLabels.map(l => ({ name: l.name, color: l.color })),
+      };
+    }));
+
+    const projectBoardWithTickets = projectBoard[0]?.columns?.map((column) => {
+      const columnTickets = ticketsData.filter(ticket =>
+        column.statusKeys.includes(ticket.status)
+      );
+      return {
+        Name: column.name,
+        Status: column.statusKeys,
+        tickets: columnTickets
+      }
+    }) || [];
+
+    const taskStatusOverview = ticketsData.reduce((acc, ticket) => {
+      const status = ticket.status;
+      if (!acc[status]) {
+        acc[status] = 0;
+      }
+      acc[status]++;
+      return acc;
+    }, {});
+    const teamMemberDetails = await Promise.all(
+      users
+        .filter(user => user.userId != null)
+        .map(async (user) => {
+          const details = await getUserDetailById(user.userId);
+          return {
+            userId: user.userId,
+            accessType: user.accessType,
+            ...details
+          };
+        })
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        projectBoard: projectBoardWithTickets,
+        taskStatusOverview,
+        users: teamMemberDetails,
+        project:{projectName:project.projectName}
+      }
+    });
+    
+  } catch (error) {
+    console.error("projectInsightController Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      msg: "Internal server error while fetching project insights.",
+      error: error.message
     });
   }
 }
