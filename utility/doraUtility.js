@@ -1,7 +1,7 @@
 import { TicketConfig } from "../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js"
 import { GET_SPRINT_ANALYTICS_PROMPT } from "../prompts/AnalyticPrompt/doraPrompt.js"
 import { generateVelocityReport } from "../services/geminiService.js"
-import { getAppSprintAnalytics, getUserDetailById } from "./platformUtility.js"
+import { getAppSprintAnalyticsByMapping, getUserDetailById } from "./platformUtility.js"
 export const getSprintReport=async(sprintIds)=>{
 
   
@@ -9,7 +9,7 @@ export const getSprintReport=async(sprintIds)=>{
         return {message:"No sprint ids provided"}
     }
     const sprintReport=await Promise.all(sprintIds.map(async(sprintId)=>{
-        const sprintData=await getAppSprintAnalytics(sprintId)
+        const sprintData=await getAppSprintAnalyticsByMapping(sprintId)
         return sprintData
     }))
     const prompt = GET_SPRINT_ANALYTICS_PROMPT(sprintReport);

@@ -2,7 +2,7 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import partnerSprint from "../../models/PlatformModel/SprintModels/partnerSprint.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import { TicketModel } from "../../models/TicketModels.js";
-import { getAppSprintAnalytics, getProjectFlowWithFallback, getUserDetailById } from "../../utility/platformUtility.js";
+import { getAppSprintAnalytics, getProjectFlowWithFallback, getSprintStatusSets, getUserDetailById } from "../../utility/platformUtility.js";
 import AnalyticMapping from "../../models/AnalyticsModels/AnalyticsMappingFields.js";
 import ScrumProjectFlow from "../../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import { getSprintReport, getSprintVelocityMatrix } from "../../utility/doraUtility.js";
@@ -11,30 +11,26 @@ export const getSprintBurndown = async (req, res) => {
   try {
     const { sprintId } = req.params;
 
-    const sprint = await PartnerSprint.findOne({ id: sprintId });
+    const sprint = await partnerSprint.findOne({ id: sprintId });
     if (!sprint) {
       return res.status(404).json({ success: false, message: "Sprint not found" });
     }
 
     const tasks = await TicketModel.find({ sprint: sprintId });
-
-    const [flow, mapping] = await Promise.all([
-      getProjectFlowWithFallback(sprint.projectId),
-      AnalyticMapping.findOne({ projectId: sprint.projectId }).select("effortConfig").lean()
-    ]);
-
-    const effortField = mapping?.effortConfig?.field || "storyPoint";
+    const flow = await getProjectFlowWithFallback(sprint.projectId);
     const boardColumns = flow?.columns || [];
-    const doneStatuses = boardColumns[boardColumns.length - 1]?.statusKeys || ["CLOSED", "DONE"];
+
+    const { doneSet } = getSprintStatusSets(boardColumns);
+    const effortField = "storyPoint";
 
     const totalPoints = tasks.reduce(
-      (sum, t) => sum + (t[effortField] || t.storyPoint || t.estimatePoints || 0),
+      (sum, t) => sum + (t[effortField] || t.estimatePoints || 0),
       0
     );
 
     const completedPoints = tasks
-      .filter((t) => doneStatuses.includes(t.status?.toUpperCase()))
-      .reduce((sum, t) => sum + (t[effortField] || t.storyPoint || t.estimatePoints || 0), 0);
+      .filter((t) => doneSet.has(t.status?.toUpperCase()))
+      .reduce((sum, t) => sum + (t[effortField] || t.estimatePoints || 0), 0);
 
     const remainingPoints = totalPoints - completedPoints;
 
@@ -56,7 +52,7 @@ export const getSprintTimeline = async (req, res) => {
   try {
     const { projectId } = req.params;
 
-    const sprints = await PartnerSprint.find({ projectId }).sort({
+    const sprints = await partnerSprint.find({ projectId }).sort({
       sprintNumber: 1,
     });
 
@@ -84,30 +80,26 @@ export const getSprintVelocity = async (req, res) => {
   try {
     const { projectId } = req.params;
 
-    const completedSprints = await PartnerSprint.find({
+    const completedSprints = await partnerSprint.find({
       projectId,
       isActive: false,
     });
 
     const velocityData = [];
-
-    const [flow, mapping] = await Promise.all([
-      getProjectFlowWithFallback(projectId),
-      AnalyticMapping.findOne({ projectId }).select("effortConfig").lean()
-    ]);
-
-    const effortField = mapping?.effortConfig?.field || "storyPoint";
+    const flow = await getProjectFlowWithFallback(projectId);
     const boardColumns = flow?.columns || [];
-    const doneStatuses = boardColumns[boardColumns.length - 1]?.statusKeys || ["CLOSED", "DONE"];
+
+    const { doneSet } = getSprintStatusSets(boardColumns);
+    const effortField = "storyPoint";
 
     for (const sprint of completedSprints) {
       const tasks = await TicketModel.find({
         sprint: sprint.id,
-        status: { $in: doneStatuses },
+        status: { $in: Array.from(doneSet) },
       });
 
       const points = tasks.reduce(
-        (sum, t) => sum + (t[effortField] || t.storyPoint || t.estimatePoints || 0),
+        (sum, t) => sum + (t[effortField] || t.estimatePoints || 0),
         0
       );
 
@@ -371,19 +363,12 @@ export const platSprintAnalytics = async (req, res) => {
     const userIds = [...new Set(usersWorking.map(u => String(u.userId)))];
     console.log(userIds,"userIds");
 
-    // 4️⃣ Project-specific status mapping (Now using Sets for O(1) lookup)
     // 4️⃣ Project-specific status mapping from Board Flow with automatic fallback
     const flow = await getProjectFlowWithFallback(projectId);
     const boardColumns = flow?.columns || [];
     
-    // Categorize status sets from flow columns dynamically
-    // 0: Todo, Last: Done, Others: Progress/Review
-    const todoSet = new Set((boardColumns[0]?.statusKeys || ["TODO", "BACKLOG", "OPEN"]).map(s => s.toUpperCase()));
-    const doneSet = new Set((boardColumns[boardColumns.length - 1]?.statusKeys || ["DONE", "CLOSED"]).map(s => s.toUpperCase()));
-    
-    // Intermediate columns are Progress/Testing
-    const progressSet = new Set((boardColumns[1]?.statusKeys || ["IN PROGRESS", "DEVELOPMENT", "IN_PROGRESS"]).map(s => s.toUpperCase()));
-    const testingSet = new Set((boardColumns[2]?.statusKeys || ["TESTING", "QA", "REVIEW", "IN_REVIEW"]).map(s => s.toUpperCase()));
+    // Categorize status sets from flow columns dynamically using shared utility
+    const { todoSet, doneSet, progressSet, testingSet } = getSprintStatusSets(boardColumns);
     // 5️⃣ Fetch all tickets for these sprints & users
     const tickets = await TicketModel.find({
       projectId,
