@@ -287,49 +287,33 @@ export const getAppSprintAnalytics = async (sprintId) => {
       throw new Error("No associated work found for the sprint");
     }
 
-    // Fetch mapping
-    const mapping = await AnalyticMapping.findOne({ projectId: sprint.projectId }).lean();
-    
-    // Default mappings if none found
-    const todoStatuses = mapping?.statusMapping?.todo || ["OPEN"];
-    const inProgressStatuses = mapping?.statusMapping?.inProgress || ["IN_PROGRESS"];
-    const testingStatuses = mapping?.statusMapping?.testing || ["TESTING"];
-    const doneStatuses = mapping?.statusMapping?.done || ["CLOSED", "DONE"];
-    const effortField = mapping?.effortConfig?.field || "storyPoint";
+    // Fetch Scrum Flow (Board Flow) with automatic fallback
+    const flow = await getProjectFlowWithFallback(sprint.projectId);
+    const boardColumns = flow?.columns || [];
+
+    const doneStatuses = boardColumns[boardColumns.length - 1]?.statusKeys || ["DONE", "CLOSED"];
 
     // Initialize counters
     let totalStoryPoint = 0;
     let completedStoryPoint = 0;
-    let totalTaskInSprint = tasks.length;
-    let completedTaskInSprint = 0;
-    let totalOpenTaskInSprint = 0;
-    let totalInProgressTaskInSprint = 0;
-    let resolvedTaskInSprint = 0;
-    let totalClosedTaskInSprint = 0;
-    let totalTicketInTestingInSprint = 0;
 
     tasks.forEach((task) => {
       const estimate = task[effortField] || task.storyPoint || task.estimatePoints || 0;
       totalStoryPoint += estimate;
       const status = task?.status?.toUpperCase();
 
-      if (todoStatuses.includes(status)) {
-        totalOpenTaskInSprint += 1;
-      } else if (inProgressStatuses.includes(status)) {
-        totalInProgressTaskInSprint += 1;
-      } else if (testingStatuses.includes(status)) {
-        totalTicketInTestingInSprint += 1;
-      } else if (doneStatuses.includes(status)) {
-        totalClosedTaskInSprint += 1;
+      if (doneStatuses.includes(status)) {
         completedStoryPoint += estimate;
-        completedTaskInSprint += 1;
-      }
-
-      // Keep resolved counter for backward compatibility if possible, or omit if covered above
-      if (status === "RESOLVED") {
-        resolvedTaskInSprint += 1;
       }
     });
+
+    const taskStatusOverview = boardColumns.reduce((acc, col) => {
+      acc[col.name] = tasks.filter(t => col.statusKeys.includes(t.status?.toUpperCase())).length;
+      return acc;
+    }, {});
+
+    const totalTaskInSprint = tasks.length;
+    const completedTaskInSprint = tasks.filter(t => doneStatuses.includes(t.status?.toUpperCase())).length;
 
     const taskCompletionPercent = totalTaskInSprint > 0 ? (completedTaskInSprint / totalTaskInSprint) * 100 : 0;
 const avgStoryPointPerTask = totalTaskInSprint > 0 ? totalStoryPoint / totalTaskInSprint : 0;
@@ -347,11 +331,7 @@ const daysRemaining = Math.ceil((sprint.endDate - new Date()) / (1000 * 60 * 60 
       remainingStoryPoint,
       totalTaskInSprint,
       completedTaskInSprint,
-      totalOpenTaskInSprint,
-      totalInProgressTaskInSprint,
-      resolvedTaskInSprint,
-      totalClosedTaskInSprint,
-      totalTicketInTestingInSprint,
+      taskStatusOverview,
       taskCompletionPercent: taskCompletionPercent.toFixed(2),
       avgStoryPointPerTask: avgStoryPointPerTask.toFixed(2),
       daysRemaining,
@@ -398,7 +378,7 @@ import { UserWorkAccess } from "../models/PlatformModel/UserWorkAccessModel.js";
  * Shared default columns
  * Single source of truth
  */
-const DEFAULT_COLUMNS = [
+export const DEFAULT_COLUMNS = [
   {
     id: "col_1",
     name: "To Do",
@@ -713,28 +693,34 @@ export function extractJSONForLLM(result) {
 }
 
 
+export const getProjectFlowWithFallback = async (projectId) => {
+  let flow = await ScrumProjectFlow.findOne({ projectId, isActive: true }).lean();
+  if (!flow) {
+    flow = await ScrumProjectFlow.findOne({ projectId: "DEFAULT", isActive: true }).lean();
+  }
+  // Ultimate safety fallback to code constants if DB is empty
+  if (!flow) {
+    return { columns: DEFAULT_COLUMNS.map(col => ({ ...col, statusKeys: col.statusKeys || [] })) };
+  }
+  return flow;
+};
+
 export const getFullprojectCurrentWorkdetails = async (projectId, userId) => {
   try {
-    const projectMapping = await AnalyticMapping.findOne({ projectId }).select("statusMapping").lean();
+    const flow = await getProjectFlowWithFallback(projectId);
 
-    const todoStatuses = projectMapping?.statusMapping?.todo || ["OPEN"];
-    const inProgressStatuses = projectMapping?.statusMapping?.inProgress || ["In Progress"];
-    const testingStatuses = projectMapping?.statusMapping?.testing || ["In Review"];
-    const doneStatuses = projectMapping?.statusMapping?.done || ["Done"];
+    const boardColumns = flow?.columns || [];
 
-    const [
-      todoCount,
-      inProgressCount,
-      testingCount,
-      doneCount,
-      teamMembers
-    ] = await Promise.all([
-      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: todoStatuses } }),
-      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: inProgressStatuses } }),
-      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: testingStatuses } }),
-      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: doneStatuses } }),
+    const [tickets, teamMembers] = await Promise.all([
+      TicketModel.find({ projectId, assignee: userId }).lean(),
       UserWorkAccess.find({ projectId, userId: { $ne: null } }).lean().select("userId")
     ]);
+
+    const taskStatusOverview = boardColumns.reduce((acc, column) => {
+      const count = tickets.filter(t => column.statusKeys.includes(t.status)).length;
+      acc[column.name] = count;
+      return acc;
+    }, {});
 
     const teamMemberDetails = await Promise.all(
       teamMembers.map(async (member) => {
@@ -747,11 +733,8 @@ export const getFullprojectCurrentWorkdetails = async (projectId, userId) => {
     );
 
     return {
-      workCountForProject: todoCount + inProgressCount + testingCount + doneCount,
-      todoCount,
-      inProgressCount,
-      testingCount,
-      doneCount,
+      workCountForProject: tickets.length,
+      taskStatusOverview,
       teamMemberDetails
     };
   } catch (error) {

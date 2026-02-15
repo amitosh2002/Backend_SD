@@ -11,7 +11,7 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import User from "../../models/UserModel.js";
 import { sendInvitationEmail } from "../../services/emailService.js";
-import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getFullprojectCurrentWorkdetails, getUserDetailById } from "../../utility/platformUtility.js";
+import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getFullprojectCurrentWorkdetails, getProjectFlowWithFallback, getUserDetailById } from "../../utility/platformUtility.js";
 import { TicketModel } from "../../models/TicketModels.js";
 import { TicketConfig } from "../../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 import HoraServiceSchema from "../../models/HoraInternal/HoraServiceSchema.js";
@@ -1213,7 +1213,7 @@ export const projectInsightController = async(req,res)=>{
     }
 
     const [projectFlow, tickets, users, allConfig] = await Promise.all([
-      ScrumProjectFlow.findOne({ projectId, isActive: true }).lean(),
+      getProjectFlowWithFallback(projectId),
       TicketModel.find({ projectId }),
       UserWorkAccess.find({ projectId }),
       TicketConfig.findOne({ projectId })

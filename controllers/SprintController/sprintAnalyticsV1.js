@@ -2,8 +2,9 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import partnerSprint from "../../models/PlatformModel/SprintModels/partnerSprint.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import { TicketModel } from "../../models/TicketModels.js";
-import { getAppSprintAnalytics, getUserDetailById } from "../../utility/platformUtility.js";
+import { getAppSprintAnalytics, getProjectFlowWithFallback, getUserDetailById } from "../../utility/platformUtility.js";
 import AnalyticMapping from "../../models/AnalyticsModels/AnalyticsMappingFields.js";
+import ScrumProjectFlow from "../../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import { getSprintReport, getSprintVelocityMatrix } from "../../utility/doraUtility.js";
 
 export const getSprintBurndown = async (req, res) => {
@@ -17,9 +18,14 @@ export const getSprintBurndown = async (req, res) => {
 
     const tasks = await TicketModel.find({ sprint: sprintId });
 
-    const mapping = await AnalyticMapping.findOne({ projectId: sprint.projectId }).lean();
+    const [flow, mapping] = await Promise.all([
+      getProjectFlowWithFallback(sprint.projectId),
+      AnalyticMapping.findOne({ projectId: sprint.projectId }).select("effortConfig").lean()
+    ]);
+
     const effortField = mapping?.effortConfig?.field || "storyPoint";
-    const doneStatuses = mapping?.statusMapping?.done || ["CLOSED", "DONE"];
+    const boardColumns = flow?.columns || [];
+    const doneStatuses = boardColumns[boardColumns.length - 1]?.statusKeys || ["CLOSED", "DONE"];
 
     const totalPoints = tasks.reduce(
       (sum, t) => sum + (t[effortField] || t.storyPoint || t.estimatePoints || 0),
@@ -85,9 +91,14 @@ export const getSprintVelocity = async (req, res) => {
 
     const velocityData = [];
 
-    const mapping = await AnalyticMapping.findOne({ projectId }).lean();
-    const doneStatuses = mapping?.statusMapping?.done || ["CLOSED", "DONE"];
+    const [flow, mapping] = await Promise.all([
+      getProjectFlowWithFallback(projectId),
+      AnalyticMapping.findOne({ projectId }).select("effortConfig").lean()
+    ]);
+
     const effortField = mapping?.effortConfig?.field || "storyPoint";
+    const boardColumns = flow?.columns || [];
+    const doneStatuses = boardColumns[boardColumns.length - 1]?.statusKeys || ["CLOSED", "DONE"];
 
     for (const sprint of completedSprints) {
       const tasks = await TicketModel.find({
@@ -361,12 +372,18 @@ export const platSprintAnalytics = async (req, res) => {
     console.log(userIds,"userIds");
 
     // 4️⃣ Project-specific status mapping (Now using Sets for O(1) lookup)
-    const mapping = await AnalyticMapping.findOne({ projectId }).lean();
+    // 4️⃣ Project-specific status mapping from Board Flow with automatic fallback
+    const flow = await getProjectFlowWithFallback(projectId);
+    const boardColumns = flow?.columns || [];
     
-    const doneSet = new Set((mapping?.statusMapping?.done || ["DONE", "CLOSED"]).map(s => s.toUpperCase()));
-    const todoSet = new Set((mapping?.statusMapping?.todo || ["TODO", "BACKLOG", "OPEN"]).map(s => s.toUpperCase()));
-    const progressSet = new Set((mapping?.statusMapping?.inProgress || ["IN PROGRESS", "DEVELOPMENT"]).map(s => s.toUpperCase()));
-    const testingSet = new Set((mapping?.statusMapping?.testing || ["TESTING", "QA", "REVIEW"]).map(s => s.toUpperCase()));
+    // Categorize status sets from flow columns dynamically
+    // 0: Todo, Last: Done, Others: Progress/Review
+    const todoSet = new Set((boardColumns[0]?.statusKeys || ["TODO", "BACKLOG", "OPEN"]).map(s => s.toUpperCase()));
+    const doneSet = new Set((boardColumns[boardColumns.length - 1]?.statusKeys || ["DONE", "CLOSED"]).map(s => s.toUpperCase()));
+    
+    // Intermediate columns are Progress/Testing
+    const progressSet = new Set((boardColumns[1]?.statusKeys || ["IN PROGRESS", "DEVELOPMENT", "IN_PROGRESS"]).map(s => s.toUpperCase()));
+    const testingSet = new Set((boardColumns[2]?.statusKeys || ["TESTING", "QA", "REVIEW", "IN_REVIEW"]).map(s => s.toUpperCase()));
     // 5️⃣ Fetch all tickets for these sprints & users
     const tickets = await TicketModel.find({
       projectId,
