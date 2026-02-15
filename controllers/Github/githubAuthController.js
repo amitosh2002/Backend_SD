@@ -182,7 +182,7 @@ export const setupInstallationGithub = async(req,res)=>{
       console.log(`[setupInstallationGithub] Successfully bulk wrote ${repoOps.length} repositories to GithubRepository model`);
     }
     await GithubInstallationModel.findOneAndUpdate(
-      { userId, installationId: Number(installation_id) ,projectId:projectId},
+      {projectId:projectId},
       {
         userId: userId,
         installationId: Number(installation_id),
