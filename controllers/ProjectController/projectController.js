@@ -1235,7 +1235,7 @@ export const projectInsightController = async(req,res)=>{
         .filter(Boolean);
 
       return {
-        ticketKey: ticket.ticketKey,
+        ticketKey: ticket.ticketKey.split("-")[0]+"-"+ticket.ticketKey.split("-")[1],
         title: ticket.title,
         status: ticket.status,
         assignee: assignee.name,
