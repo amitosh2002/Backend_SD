@@ -1,5 +1,5 @@
 import { validateToken } from '../../controllers/authController.js';
-import { acceptInvitataion, addSerivceToProjectV1, checkValidPartnerCode, createProject, deleteProject, getAllRunningProjectServicebyProjectId, getProjectById, getUserAnalyticsAgg, HoraProjectServicesV1, invitationDetails, inviteUserToProject, listUserAccessibleProjects, projectMemberController, ticketConfigurator, updateProject, updateServiceStatus, userWithProjectRights } from '../../controllers/ProjectController/projectController.js';
+import { acceptInvitataion, addSerivceToProjectV1, checkValidPartnerCode, createProject, deleteProject, getAllRunningProjectServicebyProjectId, getProjectById, getUserAnalyticsAgg, HoraProjectServicesV1, invitationDetails, inviteUserToProject, listUserAccessibleProjects, projectInsightController, projectMemberController, ticketConfigurator, updateProject, updateServiceStatus, userWithProjectRights } from '../../controllers/ProjectController/projectController.js';
 
 
 // const express = require('express');
@@ -10,6 +10,7 @@ import { authenticateToken } from '../../middleware/authMiddleware.js';
 // Get user's accessible projects
 projectRoutes.post('/v1/user-projects', authenticateToken, listUserAccessibleProjects);
 projectRoutes.post('/v1/userProjectWithRights', authenticateToken, userWithProjectRights);
+projectRoutes.post('/v1/user-projects/insights',authenticateToken,projectInsightController)
 
 // CRUD operations for projects
 projectRoutes.post('/v1/projects', authenticateToken, createProject);

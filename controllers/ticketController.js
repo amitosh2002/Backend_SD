@@ -6,7 +6,7 @@ import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js";
 import ActivityLog from "../models/PlatformModel/ActivityLogModel.js";
 import { LogActionType, LogEntityType } from "../models/PlatformModel/Enums/ActivityLogEnum.js";
-import { getCleanUniqueItems, getUserDetailById } from "../utility/platformUtility.js";
+import { getCleanUniqueItems, getProjectFlowWithFallback, getUserDetailById } from "../utility/platformUtility.js";
 import ScrumProjectFlow from "../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import { TicketConfig } from "../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 import { config } from "dotenv";
@@ -1083,7 +1083,7 @@ export const getCurrentProjectSprintWork = async(req,res)=>{
     const [users, config, flow] = await Promise.all([
       User.find({ _id: { $in: projectUserIds } }).select('_id profile email').lean(),
       TicketConfig.findOne({ projectId: projectId }).lean(),
-      ScrumProjectFlow.findOne({ projectId: projectId }).lean(),
+      getProjectFlowWithFallback(projectId),
     ]);
 
     const userFilter = (users || []).map(u => ({
@@ -1121,30 +1121,60 @@ export const getCurrentProjectSprintWork = async(req,res)=>{
 
     const totalStoryPoint = sprintWork.reduce((acc, currElem) => acc + (currElem.storyPoint || 0), 0);
     
-    const updatedSprintWork = await Promise.all(
-    sprintWork.map(async (currElem) => {
-      const user = await getUserDetailById(currElem.assignee); 
-      const ticketConfig = await TicketConfig.findOne({ projectId: projectId });
-      const ticketPriority = ticketConfig?.priorities?.find((ticketPriority) => ticketPriority.id === currElem.priority[0]);
-      const ticketLabel = ticketConfig?.labels?.find((ticketLabel) => ticketLabel.id === currElem.labels[0]);
-      const project = await ProjectModel.findOne({ projectId: projectId });
-      return {
-        ...currElem,
-        assignee: user?.name || 'Unassigned',
-        priority: ticketPriority?.name || [],
-        labels: ticketLabel?.name || [],
-        projectName: project?.projectName || ''
-      };
-    })
-  );
+    // Process tickets with details
+    const ticketsData = await Promise.all(
+      sprintWork.map(async (currElem) => {
+        const user = await getUserDetailById(currElem.assignee); 
+        const ticketPriority = config?.priorities?.find((p) => p.id === (Array.isArray(currElem.priority) ? currElem.priority[0] : currElem.priority));
+        const ticketLabel = config?.labels?.find((l) => l.id === (Array.isArray(currElem.labels) ? currElem.labels[0] : currElem.labels));
+        
+        return {
+          ...currElem,
+          assignee: user?.name || 'Unassigned',
+          assigneeImage: user?.image || null,
+          priorityName: ticketPriority?.name || "Unknown",
+          priorityColor: ticketPriority?.color || "#6b7280",
+          labelsDetails: ticketLabel ? { name: ticketLabel.name, color: ticketLabel.color } : null,
+          // Store normalized status for easier mapping
+          normalizedStatus: (currElem.status || '').toUpperCase()
+        };
+      })
+    );
+
+    // Group tickets into board flow columns based on statusKeys as a dictionary { columnName: [tickets] }
+    const boardColumns = flow?.columns || [];
+    const projectBoard = boardColumns.reduce((acc, column) => {
+      // Normalize column status keys to uppercase for robust comparison
+      const normalizedStatusKeys = (column.statusKeys || []).map(k => k.toUpperCase());
+      
+      const columnTickets = ticketsData.filter(ticket =>
+        normalizedStatusKeys.includes(ticket.normalizedStatus)
+      );
+      
+      acc[column.name] = columnTickets;
+      return acc;
+    }, {});
+
+    // Calculate status overview based on current column distribution
+    const taskStatusOverview = boardColumns.reduce((acc, column) => {
+      const normalizedStatusKeys = (column.statusKeys || []).map(k => k.toUpperCase());
+      const count = ticketsData.filter(ticket => 
+        normalizedStatusKeys.includes(ticket.normalizedStatus)
+      ).length;
+      acc[column.name] = count;
+      return acc;
+    }, {});
 
     console.log("[getCurrentProjectSprintWork] Successfully processed sprint work for:", latestSprint.sprintName);
     return res.status(200).json({
       success: true,
-      sprintName:latestSprint?.sprintName || "",
-      totalStoryPoint:totalStoryPoint,
-      sprintWork: updatedSprintWork,
-      allUserFilterAction:allUserFilterAction,
+      sprintName: latestSprint?.sprintName || "",
+      totalStoryPoint: totalStoryPoint,
+      sprintWork: ticketsData, // Flat list with details
+      data: projectBoard, // Tickets grouped by board columns (Kanban format)
+      columns: boardColumns, // Column metadata (colors, etc.)
+      taskStatusOverview: taskStatusOverview,
+      allUserFilterAction: allUserFilterAction,
       msg: "Success fetch sprint work",
     });
   } catch (error) {

@@ -269,6 +269,32 @@ export const getSprintContext = async (projectId) => {
 };
 
 
+/**
+ * Derives Todo, Done, InProgress, and Testing status sets from board columns.
+ * Assumes 0 is Todo, Last is Done, 1 is InProgress, 2 is Testing.
+ * @param {Array} boardColumns 
+ */
+export const getSprintStatusSets = (boardColumns = []) => {
+  const todoStatuses = (boardColumns[0]?.statusKeys || ["TODO", "BACKLOG", "OPEN"]).map(s => s.toUpperCase());
+  const doneStatuses = (boardColumns[boardColumns.length - 1]?.statusKeys || ["DONE", "CLOSED"]).map(s => s.toUpperCase());
+  
+  // Intermediate columns (heuristically determined by position)
+  const inProgressStatuses = (boardColumns[1]?.statusKeys || ["IN PROGRESS", "DEVELOPMENT"]).map(s => s.toUpperCase());
+  const testingStatuses = (boardColumns[2]?.statusKeys || ["TESTING", "QA", "REVIEW", "IN_REVIEW"]).map(s => s.toUpperCase());
+
+  return {
+    todoSet: new Set(todoStatuses),
+    doneSet: new Set(doneStatuses),
+    progressSet: new Set(inProgressStatuses),
+    testingSet: new Set(testingStatuses),
+    todoStatuses,
+    doneStatuses,
+    inProgressStatuses,
+    testingStatuses
+  };
+};
+
+
 export const getAppSprintAnalytics = async (sprintId) => {
   try {
     if (!sprintId) {
@@ -276,90 +302,206 @@ export const getAppSprintAnalytics = async (sprintId) => {
     }
 
     // Fetch sprint detail
-    const sprint = await partnerSprint.findOne({id:sprintId}).lean();
+    const sprint = await partnerSprint.findOne({ id: sprintId }).lean();
     if (!sprint) {
       throw new Error("Sprint not found");
     }
 
-    // Fetch tasks associated with the sprint's project
-    const tasks = await TicketModel.find({ projectId: sprint.projectId }).lean();
-    if (!tasks || tasks.length === 0) {
-      throw new Error("No associated work found for the sprint");
-    }
-
-    // Fetch mapping
-    const mapping = await AnalyticMapping.findOne({ projectId: sprint.projectId }).lean();
+    // Fetch tasks associated with the sprint
+    const tasks = await TicketModel.find({ sprint: sprintId }).lean();
     
-    // Default mappings if none found
-    const todoStatuses = mapping?.statusMapping?.todo || ["OPEN"];
-    const inProgressStatuses = mapping?.statusMapping?.inProgress || ["IN_PROGRESS"];
-    const testingStatuses = mapping?.statusMapping?.testing || ["TESTING"];
-    const doneStatuses = mapping?.statusMapping?.done || ["CLOSED", "DONE"];
-    const effortField = mapping?.effortConfig?.field || "storyPoint";
+    // Fetch Scrum Flow (Board Flow) with automatic fallback
+    const flow = await getProjectFlowWithFallback(sprint.projectId);
+    const boardColumns = flow?.columns || [];
+
+    // Derive status sets from columns
+    const { todoSet, doneSet, progressSet, testingSet } = getSprintStatusSets(boardColumns);
+
+    // Effort field fallback (no longer using AnalyticMapping in this simple version)
+    const effortField = "storyPoint";
 
     // Initialize counters
     let totalStoryPoint = 0;
     let completedStoryPoint = 0;
-    let totalTaskInSprint = tasks.length;
-    let completedTaskInSprint = 0;
-    let totalOpenTaskInSprint = 0;
-    let totalInProgressTaskInSprint = 0;
-    let resolvedTaskInSprint = 0;
-    let totalClosedTaskInSprint = 0;
-    let totalTicketInTestingInSprint = 0;
+    
+    let todoCount = 0;
+    let inProgressCount = 0;
+    let testingCount = 0;
+    let doneCount = 0;
 
     tasks.forEach((task) => {
-      const estimate = task[effortField] || task.storyPoint || task.estimatePoints || 0;
+      // Use standard effort fields with fallbacks
+      const estimate = Number(task[effortField] || task.estimatePoints || 0);
       totalStoryPoint += estimate;
-      const status = task?.status?.toUpperCase();
+      
+      const status = (task?.status || "").toUpperCase();
 
-      if (todoStatuses.includes(status)) {
-        totalOpenTaskInSprint += 1;
-      } else if (inProgressStatuses.includes(status)) {
-        totalInProgressTaskInSprint += 1;
-      } else if (testingStatuses.includes(status)) {
-        totalTicketInTestingInSprint += 1;
-      } else if (doneStatuses.includes(status)) {
-        totalClosedTaskInSprint += 1;
+      if (todoSet.has(status)) {
+        todoCount++;
+      } else if (doneSet.has(status)) {
+        doneCount++;
         completedStoryPoint += estimate;
-        completedTaskInSprint += 1;
-      }
-
-      // Keep resolved counter for backward compatibility if possible, or omit if covered above
-      if (status === "RESOLVED") {
-        resolvedTaskInSprint += 1;
+      } else if (progressSet.has(status)) {
+        inProgressCount++;
+      } else if (testingSet.has(status)) {
+        testingCount++;
+      } else {
+        // Fallback for any other statuses (count as in progress if not todo or done)
+        inProgressCount++;
       }
     });
 
-    const taskCompletionPercent = totalTaskInSprint > 0 ? (completedTaskInSprint / totalTaskInSprint) * 100 : 0;
-const avgStoryPointPerTask = totalTaskInSprint > 0 ? totalStoryPoint / totalTaskInSprint : 0;
-const daysRemaining = Math.ceil((sprint.endDate - new Date()) / (1000 * 60 * 60 * 24));
+    const taskStatusOverview = boardColumns.reduce((acc, col) => {
+      const normalizedKeys = (col.statusKeys || []).map(k => k.toUpperCase());
+      acc[col.name] = tasks.filter(t => normalizedKeys.includes((t.status || "").toUpperCase())).length;
+      return acc;
+    }, {});
 
+    const totalTaskInSprint = tasks.length;
+    const completedTaskInSprint = doneCount;
+
+    const taskCompletionPercent = totalTaskInSprint > 0 ? (completedTaskInSprint / totalTaskInSprint) * 100 : 0;
+    const avgStoryPointPerTask = totalTaskInSprint > 0 ? totalStoryPoint / totalTaskInSprint : 0;
+    
+    // Date calculation
+    const now = new Date();
+    const endDate = new Date(sprint.endDate);
+    const diffTime = endDate - now;
+    const daysRemaining = diffTime > 0 ? Math.ceil(diffTime / (1000 * 60 * 60 * 24)) : 0;
 
     const remainingStoryPoint = totalStoryPoint - completedStoryPoint;
     const velocityPercent = totalStoryPoint > 0 ? (completedStoryPoint / totalStoryPoint) * 100 : 0;
+
     // Prepare result
     const sprintAnalytics = {
       sprintId,
+      sprintName: sprint.sprintName,
       totalStoryPoint,
-      velocityPercent: velocityPercent.toFixed(2),
       completedStoryPoint,
       remainingStoryPoint,
+      velocityPercent: Number(velocityPercent.toFixed(2)),
       totalTaskInSprint,
       completedTaskInSprint,
-      totalOpenTaskInSprint,
-      totalInProgressTaskInSprint,
-      resolvedTaskInSprint,
-      totalClosedTaskInSprint,
-      totalTicketInTestingInSprint,
-      taskCompletionPercent: taskCompletionPercent.toFixed(2),
-      avgStoryPointPerTask: avgStoryPointPerTask.toFixed(2),
+      todoCount,
+      inProgressCount,
+      testingCount,
+      doneCount,
+      taskStatusOverview,
+      taskCompletionPercent: Number(taskCompletionPercent.toFixed(2)),
+      avgStoryPointPerTask: Number(avgStoryPointPerTask.toFixed(2)),
       daysRemaining,
     };
 
     return sprintAnalytics;
   } catch (error) {
     console.error("Error in getAppSprintAnalytics:", error.message);
+    throw error;
+  }
+};
+
+/**
+ * Advanced Sprint Analytics using explicit AnalyticMapping for DORA/Insights.
+ * Falls back to Board Flow logic if mapping is missing.
+ */
+export const getAppSprintAnalyticsByMapping = async (sprintId) => {
+  try {
+    const sprint = await partnerSprint.findOne({ id: sprintId }).lean();
+    if (!sprint) throw new Error("Sprint not found");
+
+    const [tasks, flow, mapping] = await Promise.all([
+      TicketModel.find({ sprint: sprintId }).lean(),
+      getProjectFlowWithFallback(sprint.projectId),
+      AnalyticMapping.findOne({ projectId: sprint.projectId }).lean()
+    ]);
+
+    const boardColumns = flow?.columns || [];
+    
+    // 1️⃣ Status Mapping Logic
+    let todoSet, doneSet, progressSet, testingSet;
+    
+    if (mapping?.statusMapping) {
+      todoSet = new Set((mapping.statusMapping.todo || []).map(s => s.toUpperCase()));
+      doneSet = new Set((mapping.statusMapping.done || []).map(s => s.toUpperCase()));
+      progressSet = new Set((mapping.statusMapping.inProgress || []).map(s => s.toUpperCase()));
+      testingSet = new Set((mapping.statusMapping.testing || []).map(s => s.toUpperCase()));
+    } else {
+      // Fallback to flow-based sets if no mapping exists
+      const sets = getSprintStatusSets(boardColumns);
+      todoSet = sets.todoSet;
+      doneSet = sets.doneSet;
+      progressSet = sets.progressSet;
+      testingSet = sets.testingSet;
+    }
+
+    // 2️⃣ Effort Field Logic
+    const effortField = mapping?.effortConfig?.field || "storyPoint";
+
+    // 3️⃣ Metrics Calculation
+    let totalStoryPoint = 0;
+    let completedStoryPoint = 0;
+    let todoCount = 0;
+    let inProgressCount = 0;
+    let testingCount = 0;
+    let doneCount = 0;
+
+    tasks.forEach(task => {
+      const estimate = Number(task[effortField] || task.estimatePoints || 0);
+      totalStoryPoint += estimate;
+      
+      const status = (task?.status || "").toUpperCase();
+      if (doneSet.has(status)) {
+        doneCount++;
+        completedStoryPoint += estimate;
+      } else if (todoSet.has(status)) {
+        todoCount++;
+      } else if (progressSet.has(status)) {
+        inProgressCount++;
+      } else if (testingSet.has(status)) {
+        testingCount++;
+      } else {
+        inProgressCount++; // Logical fallback
+      }
+    });
+
+    // 4️⃣ Board Flow Context (Insights for all status)
+    const taskStatusOverview = boardColumns.reduce((acc, col) => {
+      const normalizedKeys = (col.statusKeys || []).map(k => k.toUpperCase());
+      acc[col.name] = tasks.filter(t => normalizedKeys.includes((t.status || "").toUpperCase())).length;
+      return acc;
+    }, {});
+
+    const totalTaskInSprint = tasks.length;
+    const taskCompletionPercent = totalTaskInSprint > 0 ? (doneCount / totalTaskInSprint) * 100 : 0;
+    const velocityPercent = totalStoryPoint > 0 ? (completedStoryPoint / totalStoryPoint) * 100 : 0;
+
+    // Date/Time
+    const now = new Date();
+    const endDate = new Date(sprint.endDate);
+    const daysRemaining = Math.max(0, Math.ceil((endDate - now) / (1000 * 60 * 60 * 24)));
+
+    return {
+      sprintId,
+      sprintName: sprint.sprintName,
+      totalStoryPoint,
+      completedStoryPoint,
+      remainingStoryPoint: totalStoryPoint - completedStoryPoint,
+      velocityPercent: Number(velocityPercent.toFixed(2)),
+      totalTaskInSprint,
+      completedTaskInSprint: doneCount,
+      todoCount,
+      inProgressCount,
+      testingCount,
+      doneCount,
+      taskStatusOverview,
+      taskCompletionPercent: Number(taskCompletionPercent.toFixed(2)),
+      avgStoryPointPerTask: Number((totalTaskInSprint > 0 ? totalStoryPoint / totalTaskInSprint : 0).toFixed(2)),
+      daysRemaining,
+      // Metadata for AI
+      effortField,
+      source: mapping ? "ANAL_MAPPING" : "BOARD_FLOW"
+    };
+  } catch (error) {
+    console.error("Error in getAppSprintAnalyticsByMapping:", error.message);
     throw error;
   }
 };
@@ -398,7 +540,7 @@ import { UserWorkAccess } from "../models/PlatformModel/UserWorkAccessModel.js";
  * Shared default columns
  * Single source of truth
  */
-const DEFAULT_COLUMNS = [
+export const DEFAULT_COLUMNS = [
   {
     id: "col_1",
     name: "To Do",
@@ -713,28 +855,34 @@ export function extractJSONForLLM(result) {
 }
 
 
+export const getProjectFlowWithFallback = async (projectId) => {
+  let flow = await ScrumProjectFlow.findOne({ projectId, isActive: true }).lean();
+  if (!flow) {
+    flow = await ScrumProjectFlow.findOne({ projectId: "DEFAULT", isActive: true }).lean();
+  }
+  // Ultimate safety fallback to code constants if DB is empty
+  if (!flow) {
+    return { columns: DEFAULT_COLUMNS.map(col => ({ ...col, statusKeys: col.statusKeys || [] })) };
+  }
+  return flow;
+};
+
 export const getFullprojectCurrentWorkdetails = async (projectId, userId) => {
   try {
-    const projectMapping = await AnalyticMapping.findOne({ projectId }).select("statusMapping").lean();
+    const flow = await getProjectFlowWithFallback(projectId);
 
-    const todoStatuses = projectMapping?.statusMapping?.todo || ["OPEN"];
-    const inProgressStatuses = projectMapping?.statusMapping?.inProgress || ["In Progress"];
-    const testingStatuses = projectMapping?.statusMapping?.testing || ["In Review"];
-    const doneStatuses = projectMapping?.statusMapping?.done || ["Done"];
+    const boardColumns = flow?.columns || [];
 
-    const [
-      todoCount,
-      inProgressCount,
-      testingCount,
-      doneCount,
-      teamMembers
-    ] = await Promise.all([
-      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: todoStatuses } }),
-      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: inProgressStatuses } }),
-      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: testingStatuses } }),
-      TicketModel.countDocuments({ projectId, assignee: userId, status: { $in: doneStatuses } }),
+    const [tickets, teamMembers] = await Promise.all([
+      TicketModel.find({ projectId, assignee: userId }).lean(),
       UserWorkAccess.find({ projectId, userId: { $ne: null } }).lean().select("userId")
     ]);
+
+    const taskStatusOverview = boardColumns.reduce((acc, column) => {
+      const count = tickets.filter(t => column.statusKeys.includes(t.status)).length;
+      acc[column.name] = count;
+      return acc;
+    }, {});
 
     const teamMemberDetails = await Promise.all(
       teamMembers.map(async (member) => {
@@ -747,11 +895,8 @@ export const getFullprojectCurrentWorkdetails = async (projectId, userId) => {
     );
 
     return {
-      workCountForProject: todoCount + inProgressCount + testingCount + doneCount,
-      todoCount,
-      inProgressCount,
-      testingCount,
-      doneCount,
+      workCountForProject: tickets.length,
+      taskStatusOverview,
       teamMemberDetails
     };
   } catch (error) {
