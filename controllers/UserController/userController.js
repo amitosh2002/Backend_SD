@@ -1,10 +1,11 @@
-import AnalyticMapping from "../../models/AnalyticsModels/AnalyticsMappingFields.js";
+import { analyzeCurrentWeekAndMonthLogs, getProjectFlowWithFallback } from "../../utility/platformUtility.js";
+import ScrumProjectFlow from "../../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import { TicketModel } from "../../models/TicketModels.js";
 import User from "../../models/UserModel.js";
 import { TicketConfig } from "../../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
-import { analyzeCurrentWeekAndMonthLogs } from "../../utility/platformUtility.js";
+// import { analyzeCurrentWeekAndMonthLogs } from "../../utility/platformUtility.js";
 
 export const getUserRescentWork = async (req, res) => {
    
@@ -220,25 +221,12 @@ export const getUserWorkDetails = async (req, res) => {
         // }
         // const username = user.username;
 
-        const projectMappingArr = await AnalyticMapping.find({ projectId }).lean();
-        if (!projectMappingArr.length) {
-            return res.status(404).json({ success: false, message: "No analytic mapping found for this project" });
-        }
-        
-        const projectMapping = projectMappingArr[0];
-        const statusMap = projectMapping.statusMapping || {};
-        
-        const todoStatus = statusMap.todo || [];
-        const inProgressStatus = statusMap.inProgress || [];
-        const inReviewStatus = statusMap.testing || []; // testing maps to inReview in Response
-        const doneStatus = statusMap.done || [];
+        // Fetch board flow for status mapping with automatic fallback
+        const flow = await getProjectFlowWithFallback(projectId);
+        const boardColumns = flow?.columns || [];
 
-        const [todoTickets, inProgressTickets, inReviewTickets, doneTickets] = await Promise.all([
-            TicketModel.find({ projectId, status: { $in: todoStatus }, assignee: userId }),
-            TicketModel.find({ projectId, status: { $in: inProgressStatus }, assignee: userId }),
-            TicketModel.find({ projectId, status: { $in: inReviewStatus }, assignee: userId }),
-            TicketModel.find({ projectId, status: { $in: doneStatus }, assignee: userId })
-        ]);
+        // Fetch all user tickets for this project to distribute dynamically
+        const allTickets = await TicketModel.find({ projectId, assignee: userId }).lean();
 
         const ticketConfigArr = await TicketConfig.find({ projectId }).select("priorities labels").lean();
         const priorities = ticketConfigArr.length > 0 ? (ticketConfigArr[0].priorities || []) : [];
@@ -259,14 +247,16 @@ export const getUserWorkDetails = async (req, res) => {
             };
         };
 
+        const boardWork = boardColumns.reduce((acc, col) => {
+            const columnTickets = allTickets.filter(t => col.statusKeys.includes(t.status));
+            acc[col.name] = columnTickets.map(mapTicket);
+            return acc;
+        }, {});
+
         res.status(200).json({
             success: true,
-            data: {
-                openTickets: todoTickets.map(mapTicket),
-                inProgressTickets: inProgressTickets.map(mapTicket),
-                inReviewTickets: inReviewTickets.map(mapTicket),
-                doneTickets: doneTickets.map(mapTicket)
-            }
+            data: boardWork,
+            columns: boardColumns
         });
     } catch (error) {
         console.error("Error in getUserWorkDetails:", error);
