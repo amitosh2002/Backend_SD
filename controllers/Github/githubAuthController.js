@@ -180,6 +180,7 @@ export const setupInstallationGithub = async(req,res)=>{
     if (repoOps.length > 0) {
       await GithubRepositorySchema.bulkWrite(repoOps);
       console.log(`[setupInstallationGithub] Successfully bulk wrote ${repoOps.length} repositories to GithubRepository model`);
+      console.log(repoOps)
     }
     await GithubInstallationModel.findOneAndUpdate(
       {projectId:projectId},
@@ -194,10 +195,11 @@ export const setupInstallationGithub = async(req,res)=>{
     );
 
     console.log("[setupInstallationGithub] Installation setup successful for user:", userId, "installationId:", installation_id);
+    
     return res.status(200).json({
       success: true,
       message: "Installation setup successful",
-      redirectUrl: `${process.env.FRONTEND_URL}/workspace/${projectId}`
+      redirectUrl: `${process.env.FRONTEND_URL}/workspace/${projectId}/setting`
     });
   } catch (error) {
     console.error("[setupInstallationGithub] Error:", error);
