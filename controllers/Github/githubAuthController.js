@@ -315,12 +315,37 @@ export const createBranchV3 = async (req, res) => {
     const baseSha = baseRef.object.sha;
 
     // 4️⃣ Create new branch
-    await octokit.git.createRef({
-      owner,
-      repo,
-      ref: `refs/heads/${newBranch}`,
-      sha: baseSha,
-    });
+        try {
+          // Sanitize the branch name first
+        const sanitizedBranch = newBranch
+            .trim()
+            .replace(/\s+/g, '-') // Replaces spaces with hyphens
+            .replace(/[^a-zA-Z0-9-_/]/g, ''); // Removes any other illegal characters
+
+        // const newBranch = sanitizedBranch;
+          await octokit.git.createRef({
+            owner,
+            repo,
+            ref: `refs/heads/${sanitizedBranch}`,
+            sha: baseSha, // Must be the latest SHA from 'main'
+          });
+          console.log(`Branch ${newBranch} created successfully.`);
+        } catch (error) {
+          if (error.status === 422) {
+            console.log(`Branch ${newBranch} already exists. Updating instead...`);
+            
+            // Optional: If you want to force the existing branch to match your baseSha
+            await octokit.git.updateRef({
+              owner,
+              repo,
+              ref: `heads/${sanitizedBranch}`, // Note: updateRef often expects 'heads/...' without 'refs/'
+              sha: baseSha,
+              force: true,
+            });
+          } else {
+            throw error; // Rethrow if it's a different error (like 401 or 404)
+          }
+        }
 
     return res.status(201).json({
       success: true,
@@ -436,3 +461,13 @@ export const webhookHandler =async (req, res) => {
 
 
 // ============================Github controller for space work station===========================
+
+
+
+// Frontend
+//    ↓
+// User clicks "Create branch"
+//    ↓
+// Backend decides:
+//    ├─ User action → OAuth token → username shows
+//    └─ System action → App token → app shows

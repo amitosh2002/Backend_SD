@@ -195,7 +195,6 @@ const userSchema = new mongoose.Schema(
       required: function () {
         return !this.googleId; // phone optional for Google users
       },
-      unique: true,
       sparse: true,
       match: [/^[0-9]{10}$/, "Please enter a valid 10-digit phone number"],
     },
@@ -248,7 +247,6 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.index({ email: 1 });
-userSchema.index({ phone: 1 });
 
 // ⭐ FULL NAME
 userSchema.virtual("fullName").get(function () {
