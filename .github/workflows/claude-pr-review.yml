@@ -12,8 +12,7 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v4
-      # - uses: anthropics/claude-code-action@v1 use this if you want to use the latest version
-      - uses: anthropics/claude-code-action@a56f6832e7b50c1bcdea2e08e87e1aeaa5148b2e
+      - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
