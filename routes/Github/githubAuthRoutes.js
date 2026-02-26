@@ -1,5 +1,16 @@
 import express from "express";
-import { redirectToGithub, handleGithubCallback, setupInstallationGithub, webhookHandler, createBranchV3 } from "../../controllers/Github/githubAuthController.js";
+import { 
+  redirectToGithub, 
+  handleGithubCallback, 
+  setupInstallationGithub, 
+  webhookHandler, 
+  createBranchV3, 
+  getRepoBranchesV3, 
+  getBranchDetailsV3,
+  getReposV3,
+  getGithubSystemStats,
+  getGithubInstallationsList
+} from "../../controllers/Github/githubAuthController.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 
 const githubAuthRouter = express.Router();
@@ -10,15 +21,21 @@ githubAuthRouter.get("/login", redirectToGithub);
 // GitHub callback
 githubAuthRouter.get("/callback", handleGithubCallback);
 
-//Github Webhook routes
-githubAuthRouter.post("/service/git-webhook",express.raw({ type: '*/*' }),webhookHandler)
+// Github Webhook routes
+githubAuthRouter.post("/service/git-webhook", express.raw({ type: '*/*' }), webhookHandler);
 
 // Github setup Url
-githubAuthRouter.post("/github/setup",authenticateToken,setupInstallationGithub)
+githubAuthRouter.post("/setup", authenticateToken, setupInstallationGithub);
 
+// Branch and Repo management (V3 flow)
+githubAuthRouter.post("/create-branch", authenticateToken, createBranchV3);
+githubAuthRouter.get("/repos", authenticateToken, getReposV3);
+githubAuthRouter.get("/branches", authenticateToken, getRepoBranchesV3);
+githubAuthRouter.get("/branch-details", authenticateToken, getBranchDetailsV3);
 
-githubAuthRouter.post("/github/create-branch",authenticateToken,createBranchV3)
-
+// System Monitoring
+githubAuthRouter.get("/stats", authenticateToken, getGithubSystemStats);
+githubAuthRouter.get("/installations", authenticateToken, getGithubInstallationsList);
 
 export default githubAuthRouter;
 

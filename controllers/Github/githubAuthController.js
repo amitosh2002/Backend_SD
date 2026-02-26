@@ -4,7 +4,8 @@ import GithubInstallationModel from "../../models/GithubModels/GithubInstallatio
 import GithubRepositorySchema from "../../models/GithubModels/GithubRepositorySchema.js";
 import { GithubConfigModel } from "../../models/PlatformModel/GithubConfigModel.js";
 import GithubRepoModel from "../../models/PlatformModel/GithubRepoModel.js";
-// import GithubInstallationModel from "../../models/PlatformModel/GithubInstallationModel.js";
+import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
+import GithubEventModel from "../../models/GithubModels/GithubEventModel.js"; // Added for stats
 import { encrypt } from "../../utility/securityUtility.js";
 import axios from "axios";
 // ======================================================Not using======================
@@ -194,6 +195,12 @@ export const setupInstallationGithub = async(req,res)=>{
       { upsert: true, new: true }
     );
 
+    // Update Project connection status
+    await ProjectModel.findOneAndUpdate(
+      { projectId: projectId },
+      { isGithubConnected: true }
+    );
+
     console.log("[setupInstallationGithub] Installation setup successful for user:", userId, "installationId:", installation_id);
     
     return res.status(200).json({
@@ -251,16 +258,13 @@ export const createInstallationToken =async(installation_id) => {
 export const createBranchV3 = async (req, res) => {
   try {
     const {
-      // installationId,
-      // owner,
       projectId,
-      // repo,
+      ticketId,
+      repo: repoFullName, // Added repo full name
       baseBranch = "main",
       newBranch,
+      prefixWithUsername = false,
     } = req.body;
-
-
-
 
     if (!projectId) {
       return res.status(400).json({
@@ -269,25 +273,38 @@ export const createBranchV3 = async (req, res) => {
       });
     }
 
+    if (!repoFullName) {
+      return res.status(400).json({
+        success: false,
+        message: "repo (full name) is required",
+      });
+    }
 
-    // const repodetails = await GithubInstallationModel.findOne({projectId:projectId})
-    // if (!repodetails) {
-    //   return res.status(404).json({
-    //     success: false,
-    //     message: "Repository not found",
-    //   });
-    // }
-
-    const repodetails = await GithubRepositorySchema.findOne({projectId:projectId})
+    const repodetails = await GithubRepositorySchema.findOne({ 
+      projectId: projectId,
+      fullName: repoFullName 
+    })
     if (!repodetails) {
       return res.status(404).json({
         success: false,
-        message: "Repository not found",
+        message: "Repository not found for this project",
       });
     }
     const installationId = repodetails.installationId;
     const owner = repodetails.owner.login;
     const repo = repodetails.name;
+
+    // ─── Fetch the Hora user who triggered this action ──────────────────────
+    const { default: User } = await import("../../models/UserModel.js");
+    const horaUser = await User.findById(req.user.userId).lean();
+    const contributorName = horaUser
+      ? (horaUser.profile?.firstName
+          ? `${horaUser.profile.firstName} ${horaUser.profile.lastName || ''}`.trim()
+          : horaUser.username)
+      : 'Unknown';
+    const contributorUsername = horaUser?.username || 'unknown';
+    const contributorAvatar = horaUser?.profile?.avatar || null;
+    // ─────────────────────────────────────────────────────────────────────────
 
     // Basic validation
     if (!installationId || !owner || !repo || !newBranch) {
@@ -315,12 +332,69 @@ export const createBranchV3 = async (req, res) => {
     const baseSha = baseRef.object.sha;
 
     // 4️⃣ Create new branch
-    await octokit.git.createRef({
-      owner,
-      repo,
-      ref: `refs/heads/${newBranch}`,
-      sha: baseSha,
-    });
+        // Sanitize the branch name first
+        let sanitizedBranch = newBranch
+            .trim()
+            .replace(/\s+/g, '-')             // spaces → hyphens
+            .replace(/[^a-zA-Z0-9-_/]/g, ''); // remove illegal chars
+
+        // Optionally prefix with the Hora contributor's username
+        if (prefixWithUsername && contributorUsername) {
+          const safeUsername = contributorUsername
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, '-');
+          // Only prefix if not already prefixed
+          if (!sanitizedBranch.startsWith(`${safeUsername}/`)) {
+            sanitizedBranch = `${safeUsername}/${sanitizedBranch}`;
+          }
+        }
+
+        try {
+          await octokit.git.createRef({
+            owner,
+            repo,
+            ref: `refs/heads/${sanitizedBranch}`,
+            sha: baseSha,
+          });
+          console.log(`Branch '${sanitizedBranch}' created successfully by contributor: ${contributorName}.`);
+        } catch (error) {
+          if (error.status === 422) {
+            console.log(`Branch ${sanitizedBranch} already exists. Updating instead...`);
+            await octokit.git.updateRef({
+              owner,
+              repo,
+              ref: `heads/${sanitizedBranch}`,
+              sha: baseSha,
+              force: true,
+            });
+          } else {
+            throw error;
+          }
+        }
+
+    // ─── Update ticket details with the new branch ───
+    const branchUrl = `https://github.com/${owner}/${repo}/tree/${sanitizedBranch}`;
+    
+    if (ticketId) {
+      try {
+        const { TicketModel } = await import("../../models/TicketModels.js");
+      const ticket = await TicketModel.findByIdAndUpdate(ticketId, {
+          $push: {
+            githubBranches: {
+              name: sanitizedBranch,
+              url: branchUrl,
+              status: "CREATED",
+              createdBy: contributorName,
+              createdAt: new Date()
+            }
+          }
+        }, { new: true });
+        console.log("Updated Ticket after branch push:", ticket);
+
+      } catch (ticketError) {
+        console.error("Error updating ticket with branch info:", ticketError);
+      }
+    }
 
     return res.status(201).json({
       success: true,
@@ -329,7 +403,15 @@ export const createBranchV3 = async (req, res) => {
         owner,
         repo,
         baseBranch,
-        newBranch,
+        newBranch: sanitizedBranch,
+        branchUrl: `https://github.com/${owner}/${repo}/tree/${sanitizedBranch}`,
+        // ✅ Contributor info from Hora — shown on frontend instead of app name
+        createdBy: {
+          name: contributorName,
+          username: contributorUsername,
+          avatar: contributorAvatar,
+          userId: req.user.userId,
+        },
       },
     });
   } catch (error) {
@@ -380,6 +462,168 @@ export const getCommitStatusForBranch = async(req,res)=>{
     });
   }
 }
+
+/**
+ * Fetch all repositories for a given projectId (App flow)
+ */
+export const getReposV3 = async (req, res) => {
+  try {
+    const { projectId } = req.query;
+    if (!projectId) {
+      return res.status(400).json({ success: false, message: "projectId is required" });
+    }
+
+    const installation = await GithubInstallationModel.findOne({ projectId });
+    if (!installation) {
+      return res.status(404).json({ success: false, message: "GitHub App not installed for this project" });
+    }
+
+    const token = await getInstallationAccessToken(installation.installationId);
+    
+    const response = await axios.get("https://api.github.com/installation/repositories", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json"
+      }
+    });
+
+    return res.status(200).json({ success: true, repos: response.data.repositories });
+  } catch (error) {
+    console.error("Get repos V3 error:", error.response?.data || error.message);
+    return res.status(500).json({ success: false, message: "Failed to fetch repositories", error: error.message });
+  }
+};
+
+/**
+ * Fetch all branches of a repository for a given projectId
+ */
+export const getRepoBranchesV3 = async (req, res) => {
+  try {
+    const { projectId, repoName } = req.query;
+
+    if (!projectId) {
+      return res.status(400).json({
+        success: false,
+        message: "projectId is required",
+      });
+    }
+
+    if (!repoName) {
+      return res.status(400).json({
+        success: false,
+        message: "repoName is required",
+      });
+    }
+
+    const repodetails = await GithubRepositorySchema.findOne({ 
+      projectId: projectId, 
+      fullName: repoName 
+    });
+    if (!repodetails) {
+      return res.status(404).json({
+        success: false,
+        message: "Repository not found for this project",
+      });
+    }
+
+    const installationId = repodetails.installationId;
+    const owner = repodetails.owner.login;
+    const repo = repodetails.name;
+
+    const installationToken = await getInstallationAccessToken(installationId);
+    const octokit = new Octokit({ auth: installationToken });
+
+    const { data: branches } = await octokit.repos.listBranches({
+      owner,
+      repo,
+      per_page: 100,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Branches fetched successfully",
+      branches: branches,
+    });
+  } catch (error) {
+    console.error("Get repo branches error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch branches",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Fetch detailed information for a specific branch
+ */
+export const getBranchDetailsV3 = async (req, res) => {
+  try {
+    const { projectId, branchName } = req.query;
+
+    if (!projectId || !branchName) {
+      return res.status(400).json({
+        success: false,
+        message: "projectId and branchName are required",
+      });
+    }
+
+    const repodetails = await GithubRepositorySchema.findOne({ projectId: projectId });
+    if (!repodetails) {
+      return res.status(404).json({
+        success: false,
+        message: "Repository not found",
+      });
+    }
+
+    const installationId = repodetails.installationId;
+    const owner = repodetails.owner.login;
+    const repo = repodetails.name;
+
+    const installationToken = await getInstallationAccessToken(installationId);
+    const octokit = new Octokit({ auth: installationToken });
+
+    // 1) Branch basic info & latest commit
+    const { data: branchInfo } = await octokit.repos.getBranch({
+      owner,
+      repo,
+      branch: branchName,
+    });
+
+    // 2) Latest commit details
+    const { data: commitDetails } = await octokit.repos.getCommit({
+      owner,
+      repo,
+      ref: branchInfo.commit.sha,
+    });
+
+    // 3) PRs linked to this branch
+    const { data: pullRequests } = await octokit.pulls.list({
+      owner,
+      repo,
+      state: "all",
+      head: `${owner}:${branchName}`,
+      per_page: 10,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Branch details fetched successfully",
+      data: {
+        branch: branchInfo,
+        latestCommit: commitDetails,
+        pullRequests: pullRequests,
+      },
+    });
+  } catch (error) {
+    console.error("Get branch details error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch branch details",
+      error: error.message,
+    });
+  }
+};
 // webhook controller 
 
 
@@ -420,6 +664,39 @@ export const webhookHandler =async (req, res) => {
         await handlePushEvent(payload);
         break;
 
+      case 'create':
+        // Fired when a branch or tag is created on GitHub (from UI, CLI, API)
+        if (payload.ref_type === 'branch') {
+          const contributorLogin = payload.sender?.login || 'unknown';
+          const contributorAvatar = payload.sender?.avatar_url || null;
+          const branchCreatedName = payload.ref;
+          const repoFullName = payload.repository?.full_name;
+          console.log(`[webhookHandler] Branch '${branchCreatedName}' created in '${repoFullName}' by GitHub user: ${contributorLogin}`);
+
+          // Save event to DB so frontend can display contributor name
+          try {
+            const GithubEventModel = (await import('../../models/GithubModels/GithubEventModel.js')).default;
+            await GithubEventModel.create({
+              installationId: payload.installation?.id,
+              event: 'create',
+              action: 'branch_created',
+              repoId: payload.repository?.id,
+              payload: {
+                branchName: branchCreatedName,
+                repo: repoFullName,
+                contributor: {
+                  githubLogin: contributorLogin,
+                  avatarUrl: contributorAvatar,
+                },
+                createdAt: new Date().toISOString(),
+              }
+            });
+          } catch (dbErr) {
+            console.warn('[webhookHandler] Failed to save create event to DB:', dbErr.message);
+          }
+        }
+        break;
+
       default:
         console.log(`[webhookHandler] Unhandled GitHub event: ${event}`);
     }
@@ -432,7 +709,98 @@ export const webhookHandler =async (req, res) => {
     res.status(500).send('Webhook processing failed');
   }
 }
+/**
+ * Fetch global GitHub system stats
+ */
+export const getGithubSystemStats = async (req, res) => {
+  try {
+    const { projectId } = req.query;
+    
+    const filter = {};
+    const repoFilter = { active: true };
+    const ticketFilter = { "githubBranches.0": { $exists: true } };
 
+    if (projectId) {
+      filter.projectId = projectId;
+      repoFilter.projectId = projectId;
+      ticketFilter.projectId = projectId;
+    }
 
+    const totalInstallations = await GithubInstallationModel.countDocuments(filter);
+    const totalRepositories = await GithubRepositorySchema.countDocuments(repoFilter);
+    
+    const { TicketModel } = await import("../../models/TicketModels.js");
+    const ticketsWithBranches = await TicketModel.find(ticketFilter).lean();
+    
+    const activeBranches = new Set();
+    ticketsWithBranches.forEach(ticket => {
+      ticket.githubBranches.forEach(branch => {
+        if (branch.status === "CREATED" || !branch.status) {
+          activeBranches.add(`${ticket._id}_${branch.name}`);
+        }
+      });
+    });
 
-// ============================Github controller for space work station===========================
+    let eventFilter = {};
+    if (projectId) {
+      const repos = await GithubRepositorySchema.find({ projectId }).select('repoId').lean();
+      const repoIds = repos.map(r => r.repoId);
+      eventFilter.repoId = { $in: repoIds };
+    }
+
+    const openPRs = await GithubEventModel.countDocuments({ 
+      ...eventFilter,
+      event: "pull_request", 
+      $or: [{ action: "opened" }, { action: "reopened" }] 
+    });
+    
+    const totalCommits = await GithubEventModel.countDocuments({ 
+      ...eventFilter,
+      event: "push" 
+    });
+
+    return res.status(200).json({
+      success: true,
+      stats: {
+        totalProjects: projectId ? (totalInstallations > 0 ? 1 : 0) : totalInstallations,
+        totalRepos: totalRepositories,
+        totalBranches: activeBranches.size,
+        openPRs,
+        totalCommits
+      }
+    });
+  } catch (error) {
+    console.error("Get github system stats error:", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch GitHub stats" });
+  }
+};
+
+/**
+ * Fetch all GitHub installations
+ */
+export const getGithubInstallationsList = async (req, res) => {
+  try {
+    const { projectId } = req.query;
+    const filter = projectId ? { projectId } : {};
+    
+    const installations = await GithubInstallationModel.find(filter).lean();
+    
+    // Enrich with repository info and project name
+    const enrichedInstallations = await Promise.all(installations.map(async (inst) => {
+      const repos = await GithubRepositorySchema.find({ installationId: inst.installationId }).lean();
+      const project = await ProjectModel.findOne({ projectId: inst.projectId }).select('projectName').lean();
+      
+      return {
+        ...inst,
+        repositoryCount: repos.length,
+        repositories: repos.map(r => ({ name: r.name, fullName: r.fullName, url: r.url })),
+        projectName: project?.projectName || 'Unknown Project'
+      };
+    }));
+
+    return res.status(200).json({ success: true, installations: enrichedInstallations });
+  } catch (error) {
+    console.error("Get github installations error:", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch installations" });
+  }
+};

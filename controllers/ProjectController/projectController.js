@@ -128,7 +128,7 @@ export const getProjects = async (req, res) => {
 export const getProjectById = async (req, res) => {
   const { id } = req.params;
   try {
-    const project = await ProjectModel.findById(id);
+    const project = await ProjectModel.find({projectId:id});
     if (!project) {         
         return res.status(404).json({ message: 'Project not found' });
         }
