@@ -90,9 +90,10 @@ const TicketSchema = new mongoose.Schema(
         url: { type: String, trim: true },
         status: {
           type: String,
-          enum: ["CREATED", "MERGED", "DELETED"],
+          // enum: ["CREATED", "MERGED", "DELETED"],
           default: "CREATED",
         },
+        createdBy: { type: String, trim: true },
         createdAt: { type: Date, default: Date.now }
       }
     ],

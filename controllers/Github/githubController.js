@@ -84,15 +84,42 @@ export const createBranch = async (req, res) => {
 
     const sha = refData.object.sha;
 
+    // ─── Fetch the Hora user who triggered this action ──────────────────────
+    const { default: User } = await import("../../models/UserModel.js");
+    const horaUser = await User.findById(req.user.userId || req.user.id).lean();
+    const contributorName = horaUser
+      ? (horaUser.profile?.firstName
+          ? `${horaUser.profile.firstName} ${horaUser.profile.lastName || ''}`.trim()
+          : horaUser.username)
+      : 'Unknown';
+    const contributorUsername = horaUser?.username || 'unknown';
+    const contributorAvatar = horaUser?.profile?.avatar || null;
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Sanitize branch name
+    const sanitizedBranch = newBranchName
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-zA-Z0-9-_/]/g, '');
+
     // 2. Create a new ref
+    let finalBranchName = sanitizedBranch;
+    // Optional prefix logic if they want it
+    if (req.body.prefixWithUsername && contributorUsername) {
+      const safeUsername = contributorUsername.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+      if (!finalBranchName.startsWith(`${safeUsername}/`)) {
+        finalBranchName = `${safeUsername}/${finalBranchName}`;
+      }
+    }
+
     const { data } = await client.git.createRef({
       owner,
       repo,
-      ref: `refs/heads/${newBranchName}`,
+      ref: `refs/heads/${finalBranchName}`,
       sha,
     });
 
-    const branchUrl = `https://github.com/${owner}/${repo}/tree/${newBranchName}`;
+    const branchUrl = `https://github.com/${owner}/${repo}/tree/${finalBranchName}`;
 
     // 3. Store in Ticket if ticketId is provided
     const { ticketId } = req.body;
@@ -101,15 +128,26 @@ export const createBranch = async (req, res) => {
       await TicketModel.findByIdAndUpdate(ticketId, {
         $push: {
           githubBranches: {
-            name: newBranchName,
+            name: finalBranchName,
             url: branchUrl,
-            status: "CREATED"
+            status: "CREATED",
+            createdBy: contributorName // storing contributor for the UI
           }
         }
       });
     }
 
-    res.status(201).json({ success: true, branch: data, branchUrl });
+    res.status(201).json({ 
+      success: true, 
+      branch: data, 
+      branchUrl,
+      createdBy: {
+        name: contributorName,
+        username: contributorUsername,
+        avatar: contributorAvatar,
+        userId: req.user.userId || req.user.id,
+      },
+    });
   } catch (err) {
     console.error('createBranch error:', err);
     

@@ -361,10 +361,11 @@ export const listTickets = async (req, res) => {
         items.map(async (ticket) => {
           const user = await getUserDetailById(ticket?.assignee);
           const config=await TicketConfig.findOne({projectId:ticket?.projectId});
-          const projectName= await ProjectModel.findOne({projectId:ticket?.projectId});
+          const project = await ProjectModel.findOne({projectId:ticket?.projectId});
           ticket.type=config?.conventions.find((convention)=>convention.id===ticket.type)?.name;
           ticket.assignee = user?.name || "";
-          ticket.projectName = projectName?.projectName;
+          ticket.projectName = project?.projectName;
+          ticket.isGithubConnected = project?.isGithubConnected || false;
         })
       );
 
@@ -404,6 +405,15 @@ export const getTicketById = async (req, res) => {
       const user = await getUserDetailById(ticket.assignee);
       // Now it's safe to replace the ID with the name
       ticket.assignee = user?.name || "Unassigned";
+    }
+
+    // Hydrate project details
+    if (ticket.projectId) {
+      const project = await ProjectModel.findOne({ projectId: ticket.projectId }).lean();
+      if (project) {
+        ticket.projectName = project.projectName;
+        ticket.isGithubConnected = project.isGithubConnected || false;
+      }
     }
 
     return res.status(200).json(ticket);
