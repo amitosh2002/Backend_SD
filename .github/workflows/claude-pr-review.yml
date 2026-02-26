@@ -7,6 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write  # This is the missing piece
       pull-requests: write
       issues: write
     steps:
