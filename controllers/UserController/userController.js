@@ -1,4 +1,4 @@
-import { analyzeCurrentWeekAndMonthLogs, getProjectFlowWithFallback } from "../../utility/platformUtility.js";
+import { analyzeCurrentWeekAndMonthLogs, getProjectBoardWithFallback, getProjectFlowWithFallback } from "../../utility/platformUtility.js";
 import ScrumProjectFlow from "../../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
@@ -213,7 +213,6 @@ export const getUserWorkDetails = async (req, res) => {
         if (!projectId) {
             return res.status(400).json({ success: false, message: "Project ID is required" });
         }
-
         // // Fetch username since TicketModel.assignee stores username
         // const user = await User.findById(userId).select('username');
         // if (!user) {
@@ -222,7 +221,7 @@ export const getUserWorkDetails = async (req, res) => {
         // const username = user.username;
 
         // Fetch board flow for status mapping with automatic fallback
-        const flow = await getProjectFlowWithFallback(projectId);
+        const flow = await getProjectBoardWithFallback(projectId);
         const boardColumns = flow?.columns || [];
 
         // Fetch all user tickets for this project to distribute dynamically
@@ -247,16 +246,27 @@ export const getUserWorkDetails = async (req, res) => {
             };
         };
 
-        const boardWork = boardColumns.reduce((acc, col) => {
-            const columnTickets = allTickets.filter(t => col.statusKeys.includes(t.status));
-            acc[col.name] = columnTickets.map(mapTicket);
-            return acc;
-        }, {});
+
+        const boardWork = boardColumns.map((col) => {
+            const columnTickets = allTickets.filter(t => {
+                const ticketStatus = (t.status || "").toUpperCase().replace(/[_\s]/g, "");
+                const columnStatusKeys = (col.statusKeys || []).map(s => s.toUpperCase().replace(/[_\s]/g, ""));
+                return columnStatusKeys.includes(ticketStatus);
+            });
+            return {
+                columnId: col.columnId || col.id,
+                name: col.name,
+                Name: col.name,
+                color: col.color,
+                statusKeys: col.statusKeys,
+                Status: col.statusKeys,
+                tickets: columnTickets.map(mapTicket)
+            };
+        });
 
         res.status(200).json({
             success: true,
-            data: boardWork,
-            columns: boardColumns
+            data: boardWork
         });
     } catch (error) {
         console.error("Error in getUserWorkDetails:", error);

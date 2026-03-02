@@ -87,16 +87,17 @@ export const createTicketV2 = async (req, res) => {
       assignee: ticketData?.assignee || "Unassigned",
       // Add timestamps
       createdBy: user?.userId,
-      storyPoints: ticketData?.storyPoints || 0,
+      storyPoint: ticketData?.storyPoints || ticketData?.storyPoint || 0,
       labels: ticketData?.labels || [],
       eta: ticketData?.dueDate ? new Date(ticketData.dueDate).toISOString() : null,
       projectId: ticketData?.projectId,
+      parentTicket: ticketData?.parentTicket || null,
       // Remove any undefined or null values
     };
 
-    // Remove undefined/null values
+    // Remove undefined/null values (but keep null for parentTicket if explicit)
     Object.keys(sanitizedData).forEach(key => {
-      if (sanitizedData[key] === undefined || sanitizedData[key] === null) {
+      if (sanitizedData[key] === undefined) {
         delete sanitizedData[key];
       }
     });
@@ -356,18 +357,20 @@ export const listTickets = async (req, res) => {
  
     }
 
-    // updatinthe assigne details with name
-      await Promise.all(
-        items.map(async (ticket) => {
-          const user = await getUserDetailById(ticket?.assignee);
-          const config=await TicketConfig.findOne({projectId:ticket?.projectId});
-          const project = await ProjectModel.findOne({projectId:ticket?.projectId});
-          ticket.type=config?.conventions.find((convention)=>convention.id===ticket.type)?.name;
-          ticket.assignee = user?.name || "";
-          ticket.projectName = project?.projectName;
-          ticket.isGithubConnected = project?.isGithubConnected || false;
-        })
-      );
+    // update the assignee details with name and keep ID
+    await Promise.all(
+      items.map(async (ticket) => {
+        const user = await getUserDetailById(ticket?.assignee);
+        const config = await TicketConfig.findOne({ projectId: ticket?.projectId });
+        const project = await ProjectModel.findOne({ projectId: ticket?.projectId });
+        
+        ticket.type = config?.conventions.find((convention) => convention.id === ticket.type)?.name;
+        ticket.assigneeId = ticket.assignee; // Keep the original ID
+        ticket.assignee = user?.name || "Unassigned";
+        ticket.projectName = project?.projectName;
+        ticket.isGithubConnected = project?.isGithubConnected || false;
+      })
+    );
 
 
     /* ---------------------------------------------
@@ -403,7 +406,7 @@ export const getTicketById = async (req, res) => {
     // 4. Fetch user details only after confirming ticket exists
     if (ticket.assignee) {
       const user = await getUserDetailById(ticket.assignee);
-      // Now it's safe to replace the ID with the name
+      ticket.assigneeId = ticket.assignee; // Preserve original ID
       ticket.assignee = user?.name || "Unassigned";
     }
 
@@ -613,11 +616,12 @@ export const unassignTicket = async (req, res) => {
 // Assuming TicketModel and User model are imported
 export const setAssignee = async (req, res) => {
     try {
-        const userId = req.user.userId;
         const ticketId = req.params.id;
-        console.log(userId,"dfvgbh")
+        // Use userId from body if assigning others, fallback to current user for "Assign to me"
+        const assigneeId = req.body.userId || req.user.userId;
+
         // ... (Input Validation remains the same) ...
-        if (!userId || !ticketId) {
+        if (!assigneeId || !ticketId) {
             return res.status(400).json({ success: false, message: "Missing ticket ID or user ID (assignee)." });
         }
 
@@ -633,10 +637,11 @@ export const setAssignee = async (req, res) => {
             ticketId,
             { 
                 // 💡 CRITICAL FIX: Save the user's MongoDB ID for proper referencing/population
-                assignee: userId 
+                assignee: assigneeId 
             },
             { new: true, runValidators: true }
-        );
+        ).populate('assignee', 'username profile email');
+        
 
         if (!updatedTicket) {
             return res.status(404).json({ success: false, message: `Ticket with ID ${ticketId} not found.` });
@@ -1192,3 +1197,77 @@ export const getCurrentProjectSprintWork = async(req,res)=>{
     return res.status(500).json({ msg: "Something went wrong" });
   }
 }
+
+
+export const cloneTicket = async(req,res)=>{
+  const userId = req.user.userId;
+  const {ticketId} = req.params;
+  console.log("[cloneTicket] Request for userId:", userId, "ticketId:", ticketId);
+  try {
+    if(!ticketId){
+      console.warn("[cloneTicket] ticketId missing");
+      return res.status(400).json({ success: false, message: "Ticket id required" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const ticket = await TicketModel.findById(ticketId);
+    if(!ticket){
+      console.warn("[cloneTicket] Ticket not found for ticketId:", ticketId);
+      return res.status(404).json({ success: false, message: "Ticket not found" });
+    }
+
+    const sanitizedData = {
+      // Set defaults if not provided
+      title: ticket?.title,
+      description: ticket?.description,
+      type: ticket?.type,
+      priority: ticket?.priority,
+      status: ticket?.status,
+      // Add reporter from authenticated user if not provided
+      reporter: ticket?.reporter || user?.username,
+      assignee: ticket?.assignee || "Unassigned",
+      // Add timestamps
+      createdBy: userId,
+      storyPoint: ticket?.storyPoint || 0,
+      labels: ticket?.labels || [],
+      eta: ticket?.eta,
+      dueDate: ticket?.dueDate,
+      projectId: ticket?.projectId,
+      partnerId: ticket?.partnerId,
+      sprint: ticket?.sprint,
+      clonedFrom: ticketId,
+    };
+
+    const clonedTicket = new TicketModel(sanitizedData);
+    
+    // Derive partnerId if not present (as in createTicketV2) or just to be sure
+    if (sanitizedData.projectId) {
+      const project = await ProjectModel.findOne({ projectId: sanitizedData.projectId }).lean();
+      if (project) {
+        clonedTicket.partnerId = project.partnerId;
+      }
+    }
+    
+    await clonedTicket.save();
+
+    
+    
+    console.log("[cloneTicket] Successfully cloned ticket for ticketId:", ticketId);
+    return res.status(200).json({ 
+      success: true,
+      message: "Ticket cloned successfully",
+      ticket: clonedTicket,
+      redirectUrl: `/tickets/${clonedTicket._id}`
+    });
+  } catch (error) {
+    console.error("[cloneTicket] Error:", error);
+    return res.status(500).json({ success: false, message: "Something went wrong" });
+  }
+}
+
+
+// export const createSubTaskForTickets = as
