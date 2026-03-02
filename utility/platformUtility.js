@@ -544,7 +544,7 @@ export const DEFAULT_COLUMNS = [
   {
     id: "col_1",
     name: "To Do",
-    statusKeys: ["OPEN", "IN_PROGRESS"],
+    statusKeys: ["OPEN", "BACKLOG"],
     color: "#3b82f6",
     wipLimit: null,
     order: 1,
@@ -552,7 +552,7 @@ export const DEFAULT_COLUMNS = [
   {
     id: "col_2",
     name: "In Progress",
-    statusKeys: ["IN_PROGRESS", "IN_REVIEW", "OPEN"],
+    statusKeys: ["IN_PROGRESS", "DEVELOPMENT"],
     color: "#f59e0b",
     wipLimit: 5,
     order: 2,
@@ -560,7 +560,7 @@ export const DEFAULT_COLUMNS = [
   {
     id: "col_3",
     name: "In Review",
-    statusKeys: ["IN_REVIEW", "IN_PROGRESS", "OPEN"],
+    statusKeys: ["IN_REVIEW", "REVIEW", "QA"],
     color: "#6366f1",
     wipLimit: null,
     order: 3,
@@ -568,7 +568,7 @@ export const DEFAULT_COLUMNS = [
   {
     id: "col_4",
     name: "Done",
-    statusKeys: ["CLOSED", "OPEN"],
+    statusKeys: ["CLOSED", "DONE"],
     color: "#10b981",
     wipLimit: null,
     order: 4,
@@ -864,6 +864,23 @@ export const getProjectFlowWithFallback = async (projectId) => {
   if (!flow) {
     return { columns: DEFAULT_COLUMNS.map(col => ({ ...col, statusKeys: col.statusKeys || [] })) };
   }
+
+  return flow;
+};
+export const getProjectBoardWithFallback = async (projectId) => {
+  let flow = await SprintBoardConfig.findOne({ projectId, isActive: true }).lean();
+  console.log(flow,"in helper")
+  console.log(flow?.columns,"in helper")
+  
+  if (!flow) {
+    flow = await SprintBoardConfig.findOne({ projectId: "DEFAULT", isActive: true }).lean();
+    console.log(flow,"in helper")
+  }
+  // Ultimate safety fallback to code constants if DB is empty
+  // if (!flow) {
+  //   return { columns: DEFAULT_COLUMNS.map(col => ({ ...col, statusKeys: col.statusKeys || [] })) };
+  // }
+
   return flow;
 };
 
@@ -879,7 +896,11 @@ export const getFullprojectCurrentWorkdetails = async (projectId, userId) => {
     ]);
 
     const taskStatusOverview = boardColumns.reduce((acc, column) => {
-      const count = tickets.filter(t => column.statusKeys.includes(t.status)).length;
+      const count = tickets.filter(t => {
+        const ticketStatus = (t.status || "").toUpperCase();
+        const columnStatusKeys = (column.statusKeys || []).map(s => s.toUpperCase());
+        return columnStatusKeys.includes(ticketStatus);
+      }).length;
       acc[column.name] = count;
       return acc;
     }, {});

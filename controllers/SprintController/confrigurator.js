@@ -290,14 +290,7 @@ export const getScrumFlowForProject = async (req, res) => {
     //   order: index + 1,
     // }));
     // const columns = flow.columns;
-    const columns= flow.columns.map((item,idx)=>({
-      columnId: `flow_col_${idx + 1}`,
-      name: (item.name || '').toString().replaceAll("_", " "),
-      statusKeys: item.statusKeys,
-      color: item.color,
-      wipLimit: null,
-      order: idx + 1,
-    }))
+    const columns = (flow.columns || []).sort((a, b) => (a.order || 0) - (b.order || 0));
 
     // 4️⃣ Generate statusColors & statusWorkflow
 // 4️⃣ Generate statusColors & statusWorkflow
@@ -389,17 +382,9 @@ export const getSprintBoardForProject = async (req, res) => {
       });
     }
 
-    // 3️⃣ Normalize & preserve column order
+    // 3️⃣ Use columns as stored, ensuring order is respected
     const columns = (board.columns || [])
-      .map((item, idx) => ({
-        columnId: `board_col_${idx + 1}`,
-        name: (item.name || "").toString().replaceAll("_", " "),
-        statusKeys: Array.isArray(item.statusKeys) ? item.statusKeys : [],
-        color: item.color || "#6366f1",
-        wipLimit: item.wipLimit ?? null,
-        order: idx + 1,
-      }))
-      .sort((a, b) => a.order - b.order);
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
 
     // 4️⃣ Generate statusColors & statusWorkflow (SAME AS FLOW)
     const statusColors = {};
@@ -502,38 +487,27 @@ export const saveOrUpdateProjectBoard = async (req, res) => {
   try {
     const userId = req.user.userId;
     const { columns,projectId } = req.body; // columns from frontend
-
+    console.log(columns,"from frontend")
     if (!columns || !Array.isArray(columns)) {
       return res.status(400).json({ message: 'Invalid columns payload' });
     }
 
-    // Normalize columns: ensure columnId, statusKeys, colors, order
-    const normalizedColumns = columns.map((col, i) => ({
-      columnId: col.columnId || `col_${Date.now()}_${i}`, // fallback if no ID
-      name: col.name,
-      description: col.description || '',
-      statusKeys: Array.isArray(col.statusKeys)
-        ? Array.from(new Set(col.statusKeys)) // deduplicate
-        : [],
-      color: col.color || '#6366f1',
-      wipLimit: col.wipLimit ?? null,
-      order: col.order ?? i
-    }));
-
-    // Upsert board for this project
- const updatedBoard = await SprintBoardConfigSchema.updateOne(
-  { projectId: projectId }, // find by actual projectId
-  {
-    $set: { columns: normalizedColumns, updatedAt: new Date() },
-    $setOnInsert: {
-      projectId: projectId,
-      createdBy: userId,
-      createdAt: new Date(),
-    },
-  },
-  { upsert: true }
-);
-
+    // Replace the entire columns block with the one from the request body
+    const updatedBoard = await SprintBoardConfigSchema.updateOne(
+      { projectId: projectId }, // find by actual projectId
+      {
+        $set: { 
+          columns: columns, // Direct replacement
+          updatedAt: new Date() 
+        },
+        $setOnInsert: {
+          projectId: projectId,
+          createdBy: userId,
+          createdAt: new Date(),
+        },
+      },
+      { upsert: true }
+    );
 
     return res.status(200).json({
       message: 'Board saved successfully',

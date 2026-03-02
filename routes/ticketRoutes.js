@@ -19,6 +19,7 @@ import {
   unassignTicket,
   getSortKeyValues,
   getCurrentProjectSprintWork,
+  cloneTicket,
 } from "../controllers/ticketController.js";
 import { authenticateToken } from "../middleware/authMiddleware.js";
 
@@ -46,6 +47,13 @@ router.post("/v1/tickets/:id/unassign", authenticateToken, unassignTicket);
 router.post("/v1/tickets/:id/priority", authenticateToken, setPriority);
 router.post("/v1/tickets/:id/labels/add", authenticateToken, addLabel);
 
+
+//Tickets actions routes
+// router.post("/v1/tickets/:id/delete", authenticateToken, deleteTicket);
+// router.post("/v1/tickets/:id/move", authenticateToken, moveTicket);
+// router.post("/v1/tickets/:id/convert-to-sub-task", authenticateToken, convertToSubTask);
+// router.post("/v1/tickets/:id/convert-to-epic", authenticateToken, convertToEpic);
+router.post("/v1/tickets/:ticketId/clone", authenticateToken, cloneTicket);
 
 //==============Logs and other routes ========= 
 router.post("/v1/tickets/getAll",authenticateToken,getWorkLogActivity)

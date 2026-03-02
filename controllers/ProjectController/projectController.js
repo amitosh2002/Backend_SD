@@ -11,7 +11,7 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import User from "../../models/UserModel.js";
 import { sendInvitationEmail } from "../../services/emailService.js";
-import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getFullprojectCurrentWorkdetails, getProjectFlowWithFallback, getUserDetailById } from "../../utility/platformUtility.js";
+import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getFullprojectCurrentWorkdetails, getProjectBoardWithFallback, getProjectFlowWithFallback, getUserDetailById } from "../../utility/platformUtility.js";
 import { TicketModel } from "../../models/TicketModels.js";
 import { TicketConfig } from "../../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 import HoraServiceSchema from "../../models/HoraInternal/HoraServiceSchema.js";
@@ -405,10 +405,10 @@ export const inviteUserToProject = async (req, res) => {
       console.log(inviteLink, "invite link here")
       // Send Emaily
       await sendInvitationEmail({
-        partnerName: partnerDetails?.businessName || "Our Team",
-        projectName: projectDetails?.name || "Your Project",
+        partnerName: partnerDetails?.businessName ?? "Our Team",
+        projectName: projectDetails?.name ?? projectDetails?.projectName ?? "Your Project",
         invitationLink: inviteLink,   // CORRECT
-        role: accesTypeView(accessType) || accesTypeView(100),
+        role: accesTypeView(accessType) ?? accesTypeView(100),
         to: email,
         message,
       });
@@ -910,28 +910,39 @@ export const projectMemberController = async (req, res) => {
     switch (action.toLowerCase()) {
 
       case "get":
-        // 2. Fetch all unique User IDs associated with this project
-        const accessRecords = await UserWorkAccess.find({ projectId ,userId:{$ne:null}})
-          .select("userId email accessType")
+        // 2. Fetch all access records for this project (including pending ones)
+        const accessRecords = await UserWorkAccess.find({ projectId })
+          .select("userId invitedEmail accessType status")
           .lean();
 
         if (!accessRecords || accessRecords.length === 0) {
-          return res.status(404).json({ success: false, msg: "No members found for this project." });
+          return res.status(200).json({ success: true, count: 0, members: [] });
         }
 
-        // 3. Optimized Data Fetching: Get all User details in ONE query
-        const userIds = accessRecords.map(record => record.userId).filter(id => id != null);
+        // 3. Optimized Data Fetching: Get all User details for records that have a userId
+        const userIds = accessRecords
+          .map(record => record.userId)
+          .filter(id => id != null);
+        
         const userDetails = await User.find({ _id: { $in: userIds } })
           .select("profile username email")
           .lean();
 
-        // 4. Map details back to the access records
+        // 4. Map details back to the access records and flatten the structure
         const membersList = accessRecords.map(record => {
           const detail = userDetails.find(u => u._id.toString() === record.userId?.toString());
+          
           return {
+            ...detail,
+            id: record._id, // The UserWorkAccess record ID
             userId: record.userId,
-            email: record.email,
+            email: detail?.email || record.invitedEmail,
             role: record.accessType,
+            status: record.status,
+            username: detail?.username || null,
+            name: detail 
+              ? `${detail.profile?.firstName || ""} ${detail.profile?.lastName || ""}`.trim() || detail.username 
+              : "Pending User",
             details: detail || null
           };
         });
@@ -1213,7 +1224,7 @@ export const projectInsightController = async(req,res)=>{
     }
 
     const [projectFlow, tickets, users, allConfig] = await Promise.all([
-      getProjectFlowWithFallback(projectId),
+      getProjectBoardWithFallback(projectId),
       TicketModel.find({ projectId }),
       UserWorkAccess.find({ projectId }),
       TicketConfig.findOne({ projectId })
@@ -1235,7 +1246,7 @@ export const projectInsightController = async(req,res)=>{
         .filter(Boolean);
 
       return {
-        ticketKey: ticket.ticketKey.split("-")[0]+"-"+ticket.ticketKey.split("-")[1],
+        ticketKey: ticket.ticketKey ? ticket.ticketKey.split("-").slice(0, 2).join("-") : "",
         title: ticket.title,
         status: ticket.status,
         assignee: assignee.name,
@@ -1253,23 +1264,33 @@ export const projectInsightController = async(req,res)=>{
     }));
 
     // Distribute tasks into board flow columns
-    const boardColumns = projectFlow?.columns || [];
+    const boardColumns = (projectFlow?.columns || []).sort((a, b) => (a.order || 0) - (b.order || 0));
     const projectBoardWithTickets = boardColumns.map((column) => {
-      const columnTickets = ticketsData.filter(ticket =>
-        column.statusKeys.includes(ticket.status)
-      );
+      const columnTickets = ticketsData.filter(ticket => {
+        const ticketStatus = (ticket.status || "").toUpperCase();
+        const columnStatusKeys = (column.statusKeys || []).map(s => s.toUpperCase());
+        return columnStatusKeys.includes(ticketStatus);
+      });
       return {
+        columnId: column.columnId || column.id,
+        name: column.name,
         Name: column.name,
+        color: column.color,
+        statusKeys: column.statusKeys,
         Status: column.statusKeys,
         tickets: columnTickets
+                    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+                    
       }
     });
 
     // Group status overview by column names for a cleaner dashboard view
     const taskStatusOverview = boardColumns.reduce((acc, column) => {
-      const columnTicketsCount = ticketsData.filter(ticket => 
-        column.statusKeys.includes(ticket.status)
-      ).length;
+      const columnTicketsCount = ticketsData.filter(ticket => {
+        const ticketStatus = (ticket.status || "").toUpperCase().replace(/[\s_]/g, "");
+        const columnStatusKeys = (column.statusKeys || []).map(s => s.toUpperCase().replace(/[\s_]/g, ""));
+        return columnStatusKeys.includes(ticketStatus);
+      }).length;
       
       acc[column.name] = (acc[column.name] || 0) + columnTicketsCount;
       return acc;
@@ -1293,7 +1314,7 @@ export const projectInsightController = async(req,res)=>{
         projectBoard: projectBoardWithTickets,
         taskStatusOverview,
         users: teamMemberDetails,
-        project:{projectName:project.projectName}
+        project: { projectName: project.projectName }
       }
     });
     
