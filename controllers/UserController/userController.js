@@ -242,6 +242,7 @@ export const getUserWorkDetails = async (req, res) => {
                 priority: priorityObj ? priorityObj.name : "Unknown",
                 timeLogs: item.timeLogs,
                 totalTimeLogged: item.totalTimeLogged,
+                createdAt: item.createdAt,
                 id: item._id
             };
         };
@@ -260,7 +261,9 @@ export const getUserWorkDetails = async (req, res) => {
                 color: col.color,
                 statusKeys: col.statusKeys,
                 Status: col.statusKeys,
-                tickets: columnTickets.map(mapTicket)
+                tickets: columnTickets
+                    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+                    .map(mapTicket)
             };
         });
 

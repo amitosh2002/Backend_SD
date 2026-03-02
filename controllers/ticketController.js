@@ -367,6 +367,9 @@ export const listTickets = async (req, res) => {
         ticket.type = config?.conventions.find((convention) => convention.id === ticket.type)?.name;
         ticket.assigneeId = ticket.assignee; // Keep the original ID
         ticket.assignee = user?.name || "Unassigned";
+        ticket.assigneeImage = user?.image || null;
+        const reporterUser = await User.findOne({ username: ticket.reporter }).select("profile").lean();
+        ticket.reporterImage = reporterUser?.profile?.avatar || null;
         ticket.projectName = project?.projectName;
         ticket.isGithubConnected = project?.isGithubConnected || false;
       })
@@ -408,7 +411,10 @@ export const getTicketById = async (req, res) => {
       const user = await getUserDetailById(ticket.assignee);
       ticket.assigneeId = ticket.assignee; // Preserve original ID
       ticket.assignee = user?.name || "Unassigned";
+      ticket.assigneeImage = user?.image || null;
     }
+    const reporterUser = await User.findOne({ username: ticket.reporter }).select("profile").lean();
+    ticket.reporterImage = reporterUser?.profile?.avatar || null;
 
     // Hydrate project details
     if (ticket.projectId) {

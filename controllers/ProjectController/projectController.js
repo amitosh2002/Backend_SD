@@ -1279,6 +1279,8 @@ export const projectInsightController = async(req,res)=>{
         statusKeys: column.statusKeys,
         Status: column.statusKeys,
         tickets: columnTickets
+                    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+                    
       }
     });
 
