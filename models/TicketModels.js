@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import { CounterModel } from "./CounterModels.js";
 import { TicketConfig } from "./PlatformModel/TicketUtilityModel/TicketConfigModel.js";
-
+import { v4 as uuidv4 } from "uuid";
 // Improved slugify function
 function slugifyTitle(input) {
   return String(input || "")
@@ -17,6 +17,13 @@ function slugifyTitle(input) {
 
 const TicketSchema = new mongoose.Schema(
   {
+    id: {
+       type: String,            
+         required: true,
+         unique: true,
+         // default: () => uuid(),  // ✅ Auto-generate UUID
+         default: () => uuidv4(),
+    },
 
      partnerId: {
         type: String,
@@ -172,7 +179,24 @@ const TicketSchema = new mongoose.Schema(
       ref:"PartnerSprint",
       default:null
     },
+      clonedFrom: {
+      type: String,
+      ref: 'Ticket', // Points back to the same collection
+      default: null
+    },
+    parentTicket: {
+      type: String,
+      required: false,
+      ref:"Ticket",
+      default:null
+    },
+    subTickets: {
+      type: [String],   // array of ticket IDs
+      default: [],
+      index: true
+    }
   },
+ 
   {
     timestamps: true,
     toJSON: { virtuals: true },
