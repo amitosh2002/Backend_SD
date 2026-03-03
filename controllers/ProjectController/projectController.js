@@ -1267,8 +1267,11 @@ export const projectInsightController = async(req,res)=>{
     const boardColumns = (projectFlow?.columns || []).sort((a, b) => (a.order || 0) - (b.order || 0));
     const projectBoardWithTickets = boardColumns.map((column) => {
       const columnTickets = ticketsData.filter(ticket => {
-        const ticketStatus = (ticket.status || "").toUpperCase();
-        const columnStatusKeys = (column.statusKeys || []).map(s => s.toUpperCase());
+        if (!ticket.status) return false;
+        const ticketStatus = ticket.status.toString().toUpperCase().replace(/[\s_-]/g, "");
+        const columnStatusKeys = (column.statusKeys || []).map(s => 
+          s.toString().toUpperCase().replace(/[\s_-]/g, "")
+        );
         return columnStatusKeys.includes(ticketStatus);
       });
       return {
@@ -1285,16 +1288,27 @@ export const projectInsightController = async(req,res)=>{
     });
 
     // Group status overview by column names for a cleaner dashboard view
-    const taskStatusOverview = boardColumns.reduce((acc, column) => {
-      const columnTicketsCount = ticketsData.filter(ticket => {
-        const ticketStatus = (ticket.status || "").toUpperCase().replace(/[\s_]/g, "");
-        const columnStatusKeys = (column.statusKeys || []).map(s => s.toUpperCase().replace(/[\s_]/g, ""));
-        return columnStatusKeys.includes(ticketStatus);
-      }).length;
-      
-      acc[column.name] = (acc[column.name] || 0) + columnTicketsCount;
-      return acc;
-    }, {});
+const taskStatusOverview = boardColumns.reduce((acc, column) => {
+  // 1. Pre-normalize column keys to avoid repeating work inside the filter
+  const columnStatusKeys = (column.statusKeys || []).map(s => 
+    s.toString().toUpperCase().replace(/[\s_-]/g, "")
+  );
+
+  const columnTicketsCount = ticketsData.filter(ticket => {
+    if (!ticket.status) return false;
+
+    // 2. Normalize ticket status (handling spaces, underscores, AND hyphens)
+    const ticketStatus = ticket.status.toString().toUpperCase().replace(/[\s_-]/g, "");
+    
+    const isMatch = columnStatusKeys.includes(ticketStatus);
+
+
+    return isMatch;
+  }).length;
+  
+  acc[column.name] = (acc[column.name] || 0) + columnTicketsCount;
+  return acc;
+}, {});
     const teamMemberDetails = await Promise.all(
       users
         .filter(user => user.userId != null)
