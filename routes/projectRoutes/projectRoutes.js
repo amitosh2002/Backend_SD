@@ -1,5 +1,5 @@
 import { validateToken } from '../../controllers/authController.js';
-import { acceptInvitataion, createProject, deleteProject, getProjectById, getUserAnalyticsAgg, invitationDetails, inviteUserToProject, listUserAccessibleProjects, ticketConfigurator, updateProject, userWithProjectRights } from '../../controllers/ProjectController/projectController.js';
+import { acceptInvitataion, addSerivceToProjectV1, checkValidPartnerCode, createProject, deleteProject, getAllRunningProjectServicebyProjectId, getProjectById, getUserAnalyticsAgg, HoraProjectServicesV1, invitationDetails, inviteUserToProject, listUserAccessibleProjects, projectInsightController, projectMemberController, ticketConfigurator, updateProject, updateServiceStatus, userWithProjectRights } from '../../controllers/ProjectController/projectController.js';
 
 
 // const express = require('express');
@@ -10,6 +10,7 @@ import { authenticateToken } from '../../middleware/authMiddleware.js';
 // Get user's accessible projects
 projectRoutes.post('/v1/user-projects', authenticateToken, listUserAccessibleProjects);
 projectRoutes.post('/v1/userProjectWithRights', authenticateToken, userWithProjectRights);
+projectRoutes.post('/v1/user-projects/insights',authenticateToken,projectInsightController)
 
 // CRUD operations for projects
 projectRoutes.post('/v1/projects', authenticateToken, createProject);
@@ -22,11 +23,18 @@ projectRoutes.post('/v1/invite/invitation-details', invitationDetails);
 projectRoutes.post('/v1/invite/invitation-accept', acceptInvitataion);
 
 projectRoutes.post("/v1/projects/:projectId/config",authenticateToken,ticketConfigurator)
+projectRoutes.post("/v1/projects/manage",authenticateToken,projectMemberController)
+projectRoutes.post("/v1/partnerCode/check",authenticateToken,checkValidPartnerCode)
 
 
 //=================user analytics===========
-projectRoutes.get('/v1/user-projects/getAll',authenticateToken,getUserAnalyticsAgg)
+projectRoutes.post('/v1/user-projects/getAll',authenticateToken,getUserAnalyticsAgg)
 
+//===============services=============
+projectRoutes.get('/v1/user-projects/services/bump',authenticateToken,HoraProjectServicesV1)
+projectRoutes.post('/v1/user-projects/services/associate',authenticateToken,addSerivceToProjectV1)
+projectRoutes.get('/v1/user-projects/services/active',authenticateToken,getAllRunningProjectServicebyProjectId)
+projectRoutes.post('/v1/user-projects/services/service/update',authenticateToken,updateServiceStatus)
 
 
 

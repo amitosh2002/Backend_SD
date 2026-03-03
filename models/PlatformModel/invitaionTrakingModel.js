@@ -20,11 +20,6 @@ const invitationTrackingSchema = new mongoose.Schema({
     ref: "Project",
     required: true,
   },
-  partnerId: {
-    type: String,
-    ref: "Partner",
-    required: true,
-  },
   revoked: {
     type: Boolean,
     default: false,

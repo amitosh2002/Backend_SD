@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import { CounterModel } from "./CounterModels.js";
 import { TicketConfig } from "./PlatformModel/TicketUtilityModel/TicketConfigModel.js";
-
+import { v4 as uuidv4 } from "uuid";
 // Improved slugify function
 function slugifyTitle(input) {
   return String(input || "")
@@ -14,30 +14,21 @@ function slugifyTitle(input) {
     .substring(0, 50); // Limit length to prevent very long keys
 }
 
-// Define valid ticket types (you can modify this based on your needs)
-const TICKET_TYPES = [
-  "ARCH",
-  "BUG",
-  "FEATURE",
-  "TASK",
-  "STORY",
-  "EPIC",
-  "IMPROVEMENT",
-  "SUBTASK",
-  "TEST",
-  "DOCUMENTATION",
-  // Custom/portfolio types
-  "LIVEOPS",
-  "PLAT",
-];
 
 const TicketSchema = new mongoose.Schema(
   {
+    id: {
+       type: String,            
+         required: true,
+         unique: true,
+         // default: () => uuid(),  // ✅ Auto-generate UUID
+         default: () => uuidv4(),
+    },
 
      partnerId: {
         type: String,
         ref: 'Partner', // Reference your Partner model
-        required: [true, "Partner ID is required for the ticket context"],
+        // required: [true, "Partner ID is required for the ticket context"],
         index: true,
     },
     projectId: {
@@ -53,18 +44,15 @@ const TicketSchema = new mongoose.Schema(
       maxlength: [200, "Title cannot exceed 200 characters"],
       minlength: [3, "Title must be at least 3 characters long"],
     },
- type: {
-    type: String,
-    required: [true, "Ticket type is required"],
-    trim: true,
-    
-    set: (val) => val ? val.toUpperCase() : val, 
-    
-    // enum: {
-    //     values: TICKET_TYPES,
-    //     message: "Invalid ticket type. Must be one of: {VALUE}",
-    // },
-},
+      type: {
+          type: String,
+          required: [true, "Ticket type is required"],
+          trim: true,
+          
+          set: (val) => val ? val.toUpperCase() : val, 
+          
+
+      },
     sequenceNumber: {
       type: Number,
       required: false,
@@ -99,7 +87,7 @@ const TicketSchema = new mongoose.Schema(
       trim: true,
     },
     assignee: {
-      type: Object,
+      type: String,
       required: false,
       trim: true,
     },
@@ -109,9 +97,10 @@ const TicketSchema = new mongoose.Schema(
         url: { type: String, trim: true },
         status: {
           type: String,
-          enum: ["CREATED", "MERGED", "DELETED"],
+          // enum: ["CREATED", "MERGED", "DELETED"],
           default: "CREATED",
         },
+        createdBy: { type: String, trim: true },
         createdAt: { type: Date, default: Date.now }
       }
     ],
@@ -190,7 +179,24 @@ const TicketSchema = new mongoose.Schema(
       ref:"PartnerSprint",
       default:null
     },
+      clonedFrom: {
+      type: String,
+      ref: 'Ticket', // Points back to the same collection
+      default: null
+    },
+    parentTicket: {
+      type: String,
+      required: false,
+      ref:"Ticket",
+      default:null
+    },
+    subTickets: {
+      type: [String],   // array of ticket IDs
+      default: [],
+      index: true
+    }
   },
+ 
   {
     timestamps: true,
     toJSON: { virtuals: true },
@@ -326,5 +332,4 @@ TicketSchema.statics.findByFilters = function (filters = {}) {
 
 export const TicketModel = mongoose.model("Ticket", TicketSchema);
 
-// Export ticket types for use in frontend
-export { TICKET_TYPES };
+

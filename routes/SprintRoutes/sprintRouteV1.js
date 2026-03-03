@@ -1,7 +1,8 @@
 import express from "express";
 import { assignSprintToProjectTicket, createSprint, deactivateSprint, getProjectSprintOverview, getSprintForProject, getSprintsForPartner, startSprintManually, updateSprint } from "../../controllers/SprintController/sprintControllerV1.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
-import { platVelocityMatrix } from "../../controllers/SprintController/sprintAnalyticsV1.js";
+import { platSprintAnalytics } from "../../controllers/SprintController/sprintAnalyticsV1.js";
+import { getAnalyticsMapping, saveAnalyticsMapping } from "../../controllers/Analytics/AnalyticsMappingController.js";
 
 
 const router = express.Router();
@@ -14,10 +15,12 @@ router.post("/getAll",authenticateToken, startSprintManually);
 router.put("/deactivate/:sprintId", authenticateToken,deactivateSprint);
 router.post("/assignTicketToSprint/:sprintId/sprint", authenticateToken,assignSprintToProjectTicket);
 router.post("/allsprint",authenticateToken,getProjectSprintOverview)
-router.post("/test",authenticateToken,platVelocityMatrix)
+router.post("/dora/sprint/velocity",authenticateToken,platSprintAnalytics)
 
 
-// analytics routes 
+// analytics mapping routes
+router.get("/mapping/:projectId", authenticateToken, getAnalyticsMapping);
+router.post("/mapping/:projectId", authenticateToken, saveAnalyticsMapping);
 
 
 export default router;

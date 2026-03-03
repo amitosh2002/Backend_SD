@@ -33,6 +33,12 @@ router.post("/google-login", async (req, res) => {
     // Find user
     let user = await User.findOne({ email });
 
+    // Update user avatar if found
+    if (user) {
+      user.set("profile.avatar", picture);
+      // Removed redundant save here, will save once at the bottom
+    }
+
     // Auto-register if not found
     if (!user) {
       user = await User.create({

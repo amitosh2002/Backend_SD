@@ -1,63 +1,3 @@
-// // import nodemailer from "nodemailer";
-// // import dotenv from "dotenv";
-
-// // import { Resend } from "resend";
-
-// // dotenv.config();
-
-// // const resend = new Resend(process.env.RESEND_API_KEY);
-
-// // // Create transporter for Gmail
-// // // console.log("Setting up email transporter with user:", process.env.EMAIL_USER,process.env.EMAIL_PASSWORD);
-// // // const transporter = nodemailer.createTransport({
-// // //   service: "gmail",
-// // //   auth: {
-// // //     user: process.env.EMAIL_USER,
-// // //     pass: process.env.EMAIL_PASSWORD, // Use App Password for Gmail
-// // //   },
-// // // });
-
-// // const transporter = nodemailer.createTransport({
-// //   // service: "gmail",
-// //   // auth: {
-// //   //   user: process.env.EMAIL_USER,
-// //   //   pass: process.env.EMAIL_PASSWORD,
-// //   // },
-// //     host: process.env.MAILEROO_SMTP_HOST,
-// //   port: Number(process.env.MAILEROO_SMTP_PORT),
-// //   secure: false, // TLS
-// //   auth: {
-// //     user: process.env.MAILEROO_SMTP_USER,
-// //     pass: process.env.MAILEROO_SMTP_PASS,
-// //   },
-// // });
-
-
-// // // Resend SMTP Transporter
-// // const resendTransporter = nodemailer.createTransport({
-// //   host: "smtp.resend.com",
-// //   port: 465,
-// //   secure: true, // true for 465
-// //   auth: {
-// //     user: "resend",
-// //     pass: process.env.RESEND_API_KEY,
-// //   },
-// // });
-
-// // // Alternative configuration for other email services
-// // const createCustomTransporter = (config) => {
-// //   return nodemailer.createTransport({
-// //     host: config.host,
-// //     port: config.port,
-// //     secure: config.secure, // true for 465, false for other ports
-// //     auth: {
-// //       user: config.user,
-// //       pass: config.password,
-// //     },
-// //   });
-// // };
-
-// // export { transporter, createCustomTransporter, resend, resendTransporter };
 
 // import nodemailer from "nodemailer";
 // import dotenv from "dotenv";
@@ -66,124 +6,73 @@
 // dotenv.config();
 
 // /* -------------------------
-//    Shared Instances
+//    Resend Client (API)
 // -------------------------- */
-
 // const resend = new Resend(process.env.RESEND_API_KEY);
 
 // /* -------------------------
-//    Transporter Factories
+//    Transporters
 // -------------------------- */
 
 // const createGmailTransporter = () => {
-//   console.log("[EMAIL] Using Gmail SMTP");
+//   console.log("[EMAIL] Using Gmail SMTP (DEV)");
 //   return nodemailer.createTransport({
 //     service: "gmail",
 //     auth: {
 //       user: process.env.EMAIL_USER,
-//       pass: process.env.EMAIL_PASSWORD, // App Password only
+//       pass: process.env.EMAIL_PASSWORD, // App Password ONLY
 //     },
 //   });
-// };
-
-// // const createMailerooTransporter = () => {
-// //   console.log("[EMAIL] Using Maileroo SMTP");
-// //   return nodemailer.createTransport({
-// //     host: process.env.MAILEROO_SMTP_HOST,
-// //     port: Number(process.env.MAILEROO_SMTP_PORT || 587),
-// //     secure: false, // TLS
-// //     auth: {
-// //       user: process.env.MAILEROO_SMTP_USER,
-// //       pass: process.env.MAILEROO_SMTP_PASS,
-// //     },
-// //   });
-// // };
-// const createMailerooTransporter = () => {
-//   console.log("[EMAIL] Using Maileroo SMTP");
-//   // return nodemailer.createTransport({
-//   //   host: process.env.MAILEROO_SMTP_HOST, // e.g. smtp.maileroo.com
-//   //   port: 587,                            // ✅ MUST be 587
-//   //   secure: false,                        // ✅ false for 587 (STARTTLS)
-//   //   requireTLS: true,                     // ✅ IMPORTANT
-//   //   auth: {
-//   //     user: process.env.MAILEROO_SMTP_USER, // must be FULL EMAIL
-//   //     pass: process.env.MAILEROO_SMTP_PASS,
-//   //   },
-//   //   tls: {
-//   //     rejectUnauthorized: false,          // ✅ avoids silent TLS drop
-//   //   },
-//   // });
-//  return nodemailer.createTransport({
-//   host: process.env.MAILEROO_SMTP_HOST,
-//   port: 587,              // FORCE 587
-//   secure: false,
-//   requireTLS: true,       // 🔴 REQUIRED NOW
-//   auth: {
-//     user: process.env.MAILEROO_SMTP_USER, // FULL EMAIL
-//     pass: process.env.MAILEROO_SMTP_PASS,
-//   },
-//   tls: {
-//     rejectUnauthorized: false,
-//   },
-//   name: process.env.MAIL_FROM.split("@")[1], // e.g. yourdomain.com
-// });
-
 // };
 
 // const createResendTransporter = () => {
-//   console.log("[EMAIL] Using Resend SMTP");
-//   return nodemailer.createTransport({
-//     host: "smtp.resend.com",
-//     port: 465,
-//     secure: true,
-//     auth: {
-//       user: "resend",
-//       pass: process.env.RESEND_API_KEY,
+//   console.log("[EMAIL] Using Resend SDK Wrapper");
+//   return {
+//     sendMail: async (mailOptions) => {
+//       const { from, to, subject, html, text } = mailOptions;
+//       try {
+//         const data = await resend.emails.send({
+//           from: from || process.env.EMAIL_FROM || "onboarding@resend.dev",
+//           to: Array.isArray(to) ? to : [to],
+//           subject,
+//           html: html || text,
+//         });
+//         return { messageId: data.id, ...data };
+//       } catch (error) {
+//         console.error("[EMAIL] Resend SDK Error:", error);
+//         throw error;
+//       }
 //     },
-//   });
+//   };
 // };
 
 // /* -------------------------
-//    Dynamic Transporter Selector
+//    Transporter Selector
 // -------------------------- */
 
 // const getEmailTransporter = () => {
 //   const region = (process.env.SMTP_REGION || "").toUpperCase();
 
-//   switch (region) {
-//     case "STAGING":
-//       return createResendTransporter();
-
-//     case "PROD":
-//       return createMailerooTransporter();
-
-//     default:
-//       return createGmailTransporter();
+//   if (region === "STAGING" || region === "PROD") {
+//     return createResendTransporter();
 //   }
+
+//   return createGmailTransporter();
 // };
 
 // /* -------------------------
-//    Exported Transporters
+//    Exports
 // -------------------------- */
 
 // const transporter = getEmailTransporter();
 
-// const createCustomTransporter = (config) =>
-//   nodemailer.createTransport({
-//     host: config.host,
-//     port: config.port,
-//     secure: config.secure,
-//     auth: {
-//       user: config.user,
-//       pass: config.password,
-//     },
-//   });
-
 // export {
 //   transporter,
-//   resend,
-//   createCustomTransporter,
+//   resend, // use API directly for OTP
 // };
+
+
+
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 import { Resend } from "resend";
@@ -200,27 +89,73 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 -------------------------- */
 
 const createGmailTransporter = () => {
-  console.log("[EMAIL] Using Gmail SMTP (DEV)");
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASSWORD, // App Password ONLY
-    },
-  });
+  const user = process.env.EMAIL_USER;
+  return {
+    type: "SMTP",
+    provider: "GMAIL",
+    from: user,
+    sendMail: async (mailOptions) => {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: user,
+          pass: process.env.EMAIL_PASSWORD,
+        },
+      });
+      return transporter.sendMail(mailOptions);
+    }
+  };
 };
 
-const createResendTransporter = () => {
-  console.log("[EMAIL] Using Resend SMTP");
-  return nodemailer.createTransport({
-    host: "smtp.resend.com",
-    port: 465,
-    secure: true,
-    auth: {
-      user: "resend",
-      pass: process.env.RESEND_API_KEY, // 🔑 API KEY here
+const createResendTransporter = (region) => {
+  const rawApiKey = process.env.RESEND_API_KEY || "";
+  const apiKey = rawApiKey.trim().replace(/^["']|["']$/g, '');
+  
+  const rawFrom = process.env.RESEND_FROM_EMAIL || process.env.MAIL_FROM || process.env.EMAIL_FROM || "onboarding@resend.dev";
+  const from = rawFrom.trim().replace(/^["']|["']$/g, '');
+  
+  if (!apiKey) {
+    console.error(`[EMAIL_CONFIG] ERROR: RESEND_API_KEY is not defined in ${region} environment!`);
+  }
+
+  if (from === "onboarding@resend.dev" && (region === "PROD" || process.env.NODE_ENV === "PRODUCTION")) {
+    console.warn("\x1b[33m%s\x1b[0m", " [WARNING] You are using 'onboarding@resend.dev'. If the recipient is not your own verified email, Resend will drop this silently.");
+  }
+
+  return {
+    type: "API",
+    provider: `RESEND_${region}`,
+    from: from,
+    sendMail: async (mailOptions) => {
+      // Logic inside sendmail to handle dynamic 'from' if provided
+      const finalFrom = (mailOptions.from || from).trim().replace(/^["']|["']$/g, '');
+      const { to, subject, html, text } = mailOptions;
+      
+      try {
+        const payload = {
+          from: finalFrom,
+          to: Array.isArray(to) ? to : [to],
+          subject,
+          html: html,
+          text: text,
+        };
+
+        const response = await resend.emails.send(payload);
+
+        if (response.error) {
+          console.error(`[EMAIL_CONFIG] Resend API Error Response (From: <${finalFrom}>):`, response.error);
+          throw new Error(response.error.message || "Resend API Error");
+        }
+
+        const data = response.data || response;
+        console.log(`[RESEND_SUCCESS] ID: ${data.id} | To: ${to}`);
+        return { messageId: data.id || data.messageId };
+      } catch (error) {
+        console.error(`[EMAIL_CONFIG] Resend SDK Execution Error (Target From: <${finalFrom}>):`, error);
+        throw error;
+      }
     },
-  });
+  };
 };
 
 /* -------------------------
@@ -228,10 +163,11 @@ const createResendTransporter = () => {
 -------------------------- */
 
 const getEmailTransporter = () => {
-  const region = (process.env.SMTP_REGION || "").toUpperCase();
+  const region = (process.env.SMTP_REGION || "LOCAL").toUpperCase();
+  const nodeEnv = (process.env.NODE_ENV || "").toUpperCase();
 
-  if (region === "STAGING" || region === "PROD") {
-    return createResendTransporter();
+  if (region === "STAGING" || region === "PROD" || nodeEnv === "PRODUCTION") {
+    return createResendTransporter(region);
   }
 
   return createGmailTransporter();
@@ -242,8 +178,11 @@ const getEmailTransporter = () => {
 -------------------------- */
 
 const transporter = getEmailTransporter();
+console.log(`[EMAIL_INIT] Mode: ${transporter.type} | Provider: ${transporter.provider} | From: <${transporter.from}>`);
 
 export {
   transporter,
-  resend, // use API directly for OTP
+  resend, 
 };
+
+

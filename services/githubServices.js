@@ -2,8 +2,9 @@
 import { Octokit } from "@octokit/rest";
 import dotenv from "dotenv";
 import GithubRepoModel from "../models/PlatformModel/GithubRepoModel.js";
-import GithubInstallationModel from "../models/PlatformModel/GithubInstallationModel.js";
+// import GithubInstallationModel from "../models/PlatformModel/GithubInstallationModel.js";
 import BranchAnalyticsModel from "../models/PlatformModel/BranchAnalyticsModel.js";
+import GithubInstallationModel from "../models/GithubModels/GithubInstallationModel.js";
 dotenv.config();
 
 export const octokit = new Octokit({

@@ -8,7 +8,6 @@ import { v4 as uuidv4 } from "uuid";
 const Partner = new mongoose.Schema({
     partnerId:{
         type: String,
-        required: true,
         unique: true,
           default: () => uuidv4(),
 
@@ -39,11 +38,11 @@ const Partner = new mongoose.Schema({
   phone: {
     type: String,
     required: true,
-    unique: true,
+    // unique: true,
   },
   businessType: {
     type: String,
-    enum: ['restaurant', 'retail', 'service', 'healthcare', 'other'],
+    // enum: ['restaurant', 'retail', 'service', 'healthcare', 'other'],
     required: true,
   },
   address: {
@@ -114,8 +113,8 @@ const Partner = new mongoose.Schema({
 });
 
 // Indexes for faster queries
-Partner.index({ email: 1 });
-Partner.index({ phone: 1 });
+// Partner.index({ email: 1 });
+// Partner.index({ phone: 1 });
 Partner.index({ onboardingStatus: 1 });
 
 export const PartnerModel = mongoose.model("Partner", Partner);

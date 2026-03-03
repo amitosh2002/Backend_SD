@@ -13,7 +13,7 @@ const Projects = new mongoose.Schema({
   partnerId: {
     type:String,
     ref: 'Partner',
-    required: true,
+    // required: true,
     index: true, // Important for filtering partner's projects
   },
   projectName: {
@@ -23,7 +23,7 @@ const Projects = new mongoose.Schema({
   },
   partnerCode: {
     type: String,
-    required: true,
+    // required: true,
     trim: true,
   },
   teamSize:{
@@ -64,6 +64,23 @@ const Projects = new mongoose.Schema({
       altText: String,
     },
   ],
+services: [{
+    serviceId: {
+      type: mongoose.Schema.Types.ObjectId, // This is crucial for linking
+      ref: 'Service', // MUST match the name: mongoose.model('Service', ...)
+      required: true
+    },
+    // Optional: Add extra metadata if needed (e.g., date added)
+    addedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+
+  isGithubConnected: {
+    type: Boolean,
+    default: false,
+  },
   createdAt: {
     type: Date,
     default: Date.now,
