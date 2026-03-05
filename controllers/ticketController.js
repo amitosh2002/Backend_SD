@@ -60,10 +60,10 @@ export const createTicketV2 = async (req, res) => {
     console.log(ticketData)    
     // const userId = req.body.userId || (req.user && req.user.userId);
     if (!userId) return res.status(401).json({ message: 'Missing userId or unauthenticated' });
-  const [user, project] = await Promise.all([
-  User.findById(userId),
-  ProjectModel.findById(ticketData.projectId)
-]);
+    const [user, project] = await Promise.all([
+    User.findById(userId),
+    ProjectModel.findOne({ projectId: ticketData.projectId })
+  ]);
 
 if (!project) {
   throw new Error("Project not found");

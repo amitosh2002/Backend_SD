@@ -1423,7 +1423,7 @@ export const getBacklogForProjectWithTaskV1 = async (req, res) => {
       projectBacklogs.map(async (backlog) => {
 
         const backlogTickets = await TicketModel.find({
-          backlogId: backlog._id
+          backlogId: backlog.id
         });
 
         const tickets = await Promise.all(
@@ -1435,7 +1435,7 @@ export const getBacklogForProjectWithTaskV1 = async (req, res) => {
 
         return {
           title: backlog.projectName || backlog.title,
-          id: backlog._id,
+          id: backlog.id,
           tickets
         };
       })
