@@ -346,7 +346,7 @@ export const assignSprintToProjectTicket = async (req, res) => {
       return res.status(404).json({ success: false, message: "Ticket not found" });
     }
 
-    await TicketModel.findByIdAndUpdate(ticketId, { sprint: sprint.id });
+    await TicketModel.findByIdAndUpdate(ticketId, { sprint: sprint.id ,backlogId:null});  
 
    await ActivityLog.create(
       {

@@ -6,10 +6,11 @@ import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js";
 import ActivityLog from "../models/PlatformModel/ActivityLogModel.js";
 import { LogActionType, LogEntityType } from "../models/PlatformModel/Enums/ActivityLogEnum.js";
-import { getCleanUniqueItems, getProjectFlowWithFallback, getUserDetailById } from "../utility/platformUtility.js";
+import { getCleanUniqueItems, getProjectBoardWithFallback, getProjectFlowWithFallback, getUserDetailById, getTicketDetailsById } from "../utility/platformUtility.js";
 import ScrumProjectFlow from "../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import { TicketConfig } from "../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 import { config } from "dotenv";
+import BacklogModel from "../models/PlatformModel/TicketUtilityModel/BacklogModel.js";
 
 export const createTicket = async (req, res) => {
   try {
@@ -59,7 +60,30 @@ export const createTicketV2 = async (req, res) => {
     console.log(ticketData)    
     // const userId = req.body.userId || (req.user && req.user.userId);
     if (!userId) return res.status(401).json({ message: 'Missing userId or unauthenticated' });
-    const user = await User.findById(userId);
+  const [user, project] = await Promise.all([
+  User.findById(userId),
+  ProjectModel.findById(ticketData.projectId)
+]);
+
+if (!project) {
+  throw new Error("Project not found");
+}
+
+const backlog = await BacklogModel.findOneAndUpdate(
+  { projectId: ticketData.projectId },
+  {
+    $setOnInsert: {
+      projectId: ticketData.projectId,
+      projectName: project.name,
+      createdBy: userId
+    }
+  },
+  {
+    new: true,
+    upsert: true
+  }
+);
+
     if (!user) {
       return res.status(400).json({ message: "User not found" });
     }
@@ -92,6 +116,7 @@ export const createTicketV2 = async (req, res) => {
       eta: ticketData?.dueDate ? new Date(ticketData.dueDate).toISOString() : null,
       projectId: ticketData?.projectId,
       parentTicket: ticketData?.parentTicket || null,
+      backlogId: backlog?.id,
       // Remove any undefined or null values
     };
 
@@ -544,35 +569,32 @@ export const setStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    // const updated = await TicketModel.findByIdAndUpdate(
-    //   id,
-    //   { status },
-    //   { new: true, runValidators: true }
-    // );
+    console.log(status, "from controller");
 
-    const ticket = await TicketModel.findById(id);
+    // Use findByIdAndUpdate with $set to avoid Mongoose hydrating/validating
+    // other fields (e.g. labels stored as objects in DB instead of string IDs)
+    const ticket = await TicketModel.findByIdAndUpdate(
+      id,
+      { $set: { status } },
+      { new: false } // get the OLD doc so we can log prevStatus
+    ).lean();
 
-    const prevStatus = ticket.status;
- 
-    ticket.status = status;
-    await ticket.save();
-
-      await ActivityLog.create({
-        userId: req.user.userId,
-        projectId: ticket.projectId,
-        actionType: LogActionType.TICKET_TRANSITION,
-        targetType: LogEntityType.TASK,
-        targetId: ticket._id,
-        changes: 
-          {
-            field: 'status',
-            prevValue: prevStatus,
-            newValue: status,
-          },
-        
-      });
     if (!ticket) return res.status(404).json({ message: "Ticket not found" });
-    return res.status(200).json({msg:"ticket status updated"});
+
+    await ActivityLog.create({
+      userId: req.user.userId,
+      projectId: ticket.projectId,
+      actionType: LogActionType.TICKET_TRANSITION,
+      targetType: LogEntityType.TASK,
+      targetId: ticket._id,
+      changes: {
+        field: 'status',
+        prevValue: ticket.status,
+        newValue: status,
+      },
+    });
+
+    return res.status(200).json({ msg: "ticket status updated", status });
   } catch (err) {
     console.error("Error setting status:", err);
     return res.status(500).json({ message: "Internal server error" });
@@ -1104,7 +1126,7 @@ export const getCurrentProjectSprintWork = async(req,res)=>{
     const [users, config, flow] = await Promise.all([
       User.find({ _id: { $in: projectUserIds } }).select('_id profile email').lean(),
       TicketConfig.findOne({ projectId: projectId }).lean(),
-      getProjectFlowWithFallback(projectId),
+      getProjectBoardWithFallback(projectId),
     ]);
 
     const userFilter = (users || []).map(u => ({
@@ -1142,57 +1164,71 @@ export const getCurrentProjectSprintWork = async(req,res)=>{
 
     const totalStoryPoint = sprintWork.reduce((acc, currElem) => acc + (currElem.storyPoint || 0), 0);
     
-    // Process tickets with details
+    // Process tickets with details using the robust helper
     const ticketsData = await Promise.all(
       sprintWork.map(async (currElem) => {
-        const user = await getUserDetailById(currElem.assignee); 
-        const ticketPriority = config?.priorities?.find((p) => p.id === (Array.isArray(currElem.priority) ? currElem.priority[0] : currElem.priority));
-        const ticketLabel = config?.labels?.find((l) => l.id === (Array.isArray(currElem.labels) ? currElem.labels[0] : currElem.labels));
+        const ticketDetails = await getTicketDetailsById(currElem._id || currElem.id);
         
         return {
-          ...currElem,
-          assignee: user?.name || 'Unassigned',
-          assigneeImage: user?.image || null,
-          priorityName: ticketPriority?.name || "Unknown",
-          priorityColor: ticketPriority?.color || "#6b7280",
-          labelsDetails: ticketLabel ? { name: ticketLabel.name, color: ticketLabel.color } : null,
-          // Store normalized status for easier mapping
-          normalizedStatus: (currElem.status || '').toUpperCase()
+          ...ticketDetails,
+          // Store normalized status for easier mapping (strip spaces, underscores, hyphens)
+          normalizedStatus: (currElem.status || '').toUpperCase().replace(/[\s_-]/g, "")
         };
       })
     );
 
-    // Group tickets into board flow columns based on statusKeys as a dictionary { columnName: [tickets] }
+    // Group tickets into board flow columns based on statusKeys with robust global deduplication
     const boardColumns = flow?.columns || [];
-    const projectBoard = boardColumns.reduce((acc, column) => {
-      // Normalize column status keys to uppercase for robust comparison
-      const normalizedStatusKeys = (column.statusKeys || []).map(k => k.toUpperCase());
-      
-      const columnTickets = ticketsData.filter(ticket =>
-        normalizedStatusKeys.includes(ticket.normalizedStatus)
-      );
-      
-      acc[column.name] = columnTickets;
-      return acc;
-    }, {});
+    
+    // 1️⃣ Deduplicate initial ticket list by ID to handle DB edge cases
+    const uniqueTicketsMap = new Map();
+    ticketsData.forEach(t => {
+      const tid = (t._id || t.id).toString();
+      if (!uniqueTicketsMap.has(tid)) {
+        uniqueTicketsMap.set(tid, t);
+      }
+    });
+    const uniqueTickets = Array.from(uniqueTicketsMap.values());
 
-    // Calculate status overview based on current column distribution
-    const taskStatusOverview = boardColumns.reduce((acc, column) => {
-      const normalizedStatusKeys = (column.statusKeys || []).map(k => k.toUpperCase());
-      const count = ticketsData.filter(ticket => 
-        normalizedStatusKeys.includes(ticket.normalizedStatus)
-      ).length;
-      acc[column.name] = count;
-      return acc;
-    }, {});
+    const processedTicketIds = new Set();
+    const projectBoardWithTickets = boardColumns.map((column) => {
+      // Normalize column status keys for robust comparison (strip spaces, underscores, hyphens)
+      const normalizedStatusKeys = (column.statusKeys || []).map(k => k.toUpperCase().replace(/[\s_-]/g, ""));
+      
+      const columnTickets = uniqueTickets.filter(ticket => {
+        const tid = (ticket.id || ticket._id).toString();
+        if (processedTicketIds.has(tid)) return false;
+
+        const isMatch = normalizedStatusKeys.includes(ticket.normalizedStatus);
+        if (isMatch) {
+          processedTicketIds.add(tid);
+        }
+        return isMatch;
+      });
+      
+      return {
+        columnId: column.columnId || column.id,
+        name: column.name,
+        Name: column.name,
+        color: column.color,
+        statusKeys: column.statusKeys,
+        Status: column.statusKeys,
+        tickets: columnTickets.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      };
+    });
+
+    // 2️⃣ Calculate status overview based on deduplicated distribution
+    const taskStatusOverview = {};
+    projectBoardWithTickets.forEach(col => {
+      taskStatusOverview[col.name] = (col.tickets || []).length;
+    });
 
     console.log("[getCurrentProjectSprintWork] Successfully processed sprint work for:", latestSprint.sprintName);
     return res.status(200).json({
       success: true,
       sprintName: latestSprint?.sprintName || "",
       totalStoryPoint: totalStoryPoint,
-      sprintWork: ticketsData, // Flat list with details
-      data: projectBoard, // Tickets grouped by board columns (Kanban format)
+      data: projectBoardWithTickets, // Tickets grouped by board columns in an array format
       columns: boardColumns, // Column metadata (colors, etc.)
       taskStatusOverview: taskStatusOverview,
       allUserFilterAction: allUserFilterAction,

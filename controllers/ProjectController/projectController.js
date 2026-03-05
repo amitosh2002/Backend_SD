@@ -11,13 +11,14 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import User from "../../models/UserModel.js";
 import { sendInvitationEmail } from "../../services/emailService.js";
-import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getFullprojectCurrentWorkdetails, getProjectBoardWithFallback, getProjectFlowWithFallback, getUserDetailById } from "../../utility/platformUtility.js";
+import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getFullprojectCurrentWorkdetails, getProjectBoardWithFallback, getProjectFlowWithFallback, getTicketDetailsById, getUserDetailById } from "../../utility/platformUtility.js";
 import { TicketModel } from "../../models/TicketModels.js";
 import { TicketConfig } from "../../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 import HoraServiceSchema from "../../models/HoraInternal/HoraServiceSchema.js";
 import ProjectService from "../../models/PlatformModel/ProjectServiceSchema.js";
 import ScrumProjectFlow from "../../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import SprintBoardConfig from "../../models/PlatformModel/SprintModels/confrigurator/sprintBoardModel.js";
+import BacklogModel from "../../models/PlatformModel/TicketUtilityModel/BacklogModel.js";
 
 // import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
@@ -1260,20 +1261,43 @@ export const projectInsightController = async(req,res)=>{
         priorityColor: mappedPriorities.length > 0 ? mappedPriorities[0].color : "#6b7280",
         // Map labels with colors
         labels: mappedLabels.map(l => ({ name: l.name, color: l.color })),
+        _id: ticket._id,
+        id: ticket._id,
       };
     }));
 
-    // Distribute tasks into board flow columns
+    // 1️⃣ Deduplicate initial ticket list by ID (and Key if necessary) to handle DB edge cases
+    const uniqueTicketsMap = new Map();
+    ticketsData.forEach(t => {
+      const tid = (t._id || t.id).toString();
+      if (!uniqueTicketsMap.has(tid)) {
+        uniqueTicketsMap.set(tid, t);
+      }
+    });
+    const uniqueTickets = Array.from(uniqueTicketsMap.values());
+
+    // 2️⃣ Distribute tasks into board flow columns with global deduplication
     const boardColumns = (projectFlow?.columns || []).sort((a, b) => (a.order || 0) - (b.order || 0));
+    const processedTicketIds = new Set();
+    
     const projectBoardWithTickets = boardColumns.map((column) => {
-      const columnTickets = ticketsData.filter(ticket => {
-        if (!ticket.status) return false;
-        const ticketStatus = ticket.status.toString().toUpperCase().replace(/[\s_-]/g, "");
-        const columnStatusKeys = (column.statusKeys || []).map(s => 
-          s.toString().toUpperCase().replace(/[\s_-]/g, "")
-        );
-        return columnStatusKeys.includes(ticketStatus);
+      const columnStatusKeys = (column.statusKeys || []).map(s => 
+        s.toString().toUpperCase().replace(/[\s_-]/g, "")
+      );
+
+      const columnTickets = uniqueTickets.filter(ticket => {
+        const tid = (ticket._id || ticket.id).toString();
+        if (!ticket.status || processedTicketIds.has(tid)) return false;
+        
+        const ticketStatus = (ticket.status || "").toString().toUpperCase().replace(/[\s_-]/g, "");
+        const isMatch = columnStatusKeys.includes(ticketStatus);
+        
+        if (isMatch) {
+          processedTicketIds.add(tid);
+        }
+        return isMatch;
       });
+      
       return {
         columnId: column.columnId || column.id,
         name: column.name,
@@ -1283,32 +1307,14 @@ export const projectInsightController = async(req,res)=>{
         Status: column.statusKeys,
         tickets: columnTickets
                     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-                    
       }
     });
 
-    // Group status overview by column names for a cleaner dashboard view
-const taskStatusOverview = boardColumns.reduce((acc, column) => {
-  // 1. Pre-normalize column keys to avoid repeating work inside the filter
-  const columnStatusKeys = (column.statusKeys || []).map(s => 
-    s.toString().toUpperCase().replace(/[\s_-]/g, "")
-  );
-
-  const columnTicketsCount = ticketsData.filter(ticket => {
-    if (!ticket.status) return false;
-
-    // 2. Normalize ticket status (handling spaces, underscores, AND hyphens)
-    const ticketStatus = ticket.status.toString().toUpperCase().replace(/[\s_-]/g, "");
-    
-    const isMatch = columnStatusKeys.includes(ticketStatus);
-
-
-    return isMatch;
-  }).length;
-  
-  acc[column.name] = (acc[column.name] || 0) + columnTicketsCount;
-  return acc;
-}, {});
+    // 3️⃣ Group status overview by column results for perfect consistency
+    const taskStatusOverview = {};
+    projectBoardWithTickets.forEach(col => {
+      taskStatusOverview[col.name] = (col.tickets || []).length;
+    });
     const teamMemberDetails = await Promise.all(
       users
         .filter(user => user.userId != null)
@@ -1341,3 +1347,115 @@ const taskStatusOverview = boardColumns.reduce((acc, column) => {
     });
   }
 }
+
+// export const getBacklogForProjectWithTaskV1 = async(req,res)=>{
+//   try {
+//     const {projectId} = req.body;
+//     const userId=req.user.userId;
+
+//     const haveRights = await UserWorkAccess.exists({
+//       projectId: projectId,
+//       userId: userId,
+//       accessType: { $gte: 100 }
+//     });
+
+//     if (!haveRights) {
+//       return res.status(403).json({ success: false, msg: "Insufficient permissions to manage services." });
+//     }
+//     console.log(haveRights,"haveRights")
+
+//     const [projectBacklogs,project] = await Promise.all([
+//       BacklogModel.find({ projectId }),
+//       ProjectModel.find({projectId})
+//     ]);
+    
+
+//     const backlogData = await Promise.all(projectBacklogs.map(async (backlog) => {
+//       const backlogTickets = await TicketModel.find({ backlogId: backlog.id });
+//       const backlogsTicketDetails = backlogTickets.map(async (ticket) => {
+//         ticketDetails = await getTicketDetailsById(ticket._id || ticket.id);
+//         return {
+//          ...ticketDetails
+//         };
+//       });
+//       return {
+//         title: backlog.title,
+//         id: backlog.id,
+//       };
+//     }));
+
+//     return res.status(200).json({
+//       success: true,
+//       data: {
+//         backlogData,
+//         project: { projectName: project.projectName }
+//       }
+//     });
+//   } catch (error) {
+    
+//   }
+// }
+
+export const getBacklogForProjectWithTaskV1 = async (req, res) => {
+  try {
+    const { projectId } = req.body;
+    const userId = req.user.userId;
+
+    const haveRights = await UserWorkAccess.exists({
+      projectId: projectId,
+      userId: userId,
+      accessType: { $gte: 100 }
+    });
+
+    if (!haveRights) {
+      return res.status(403).json({
+        success: false,
+        msg: "Insufficient permissions to manage services."
+      });
+    }
+
+    const [projectBacklogs, project] = await Promise.all([
+      BacklogModel.find({ projectId, isDeleted: false }),
+      ProjectModel.find({projectId})
+    ]);
+
+    const backlogData = await Promise.all(
+      projectBacklogs.map(async (backlog) => {
+
+        const backlogTickets = await TicketModel.find({
+          backlogId: backlog._id
+        });
+
+        const tickets = await Promise.all(
+          backlogTickets.map(async (ticket) => {
+            const ticketDetails = await getTicketDetailsById(ticket._id);
+            return ticketDetails;
+          })
+        );
+
+        return {
+          title: backlog.projectName || backlog.title,
+          id: backlog._id,
+          tickets
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        backlogData,
+        project: {
+          projectName: project?.projectName || project?.name
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      msg: "Server error"
+    });
+  }
+};
