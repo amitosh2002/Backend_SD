@@ -346,7 +346,8 @@ export const listTickets = async (req, res) => {
         });
       }
       filters.partnerId = String(partnerId);
-    } else if (allowedPartnerIds.size) {
+    } else if (allowedPartnerIds.size && !filters.projectId) {
+      // Only apply global partner filter if we aren't already restricted to specific projects
       filters.partnerId = { $in: [...allowedPartnerIds] };
     }
 
