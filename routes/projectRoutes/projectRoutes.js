@@ -1,5 +1,5 @@
 import { validateToken } from '../../controllers/authController.js';
-import { acceptInvitataion, addSerivceToProjectV1, checkValidPartnerCode, createProject, deleteProject, getAllRunningProjectServicebyProjectId, getProjectById, getUserAnalyticsAgg, HoraProjectServicesV1, invitationDetails, inviteUserToProject, listUserAccessibleProjects, projectInsightController, projectMemberController, ticketConfigurator, updateProject, updateServiceStatus, userWithProjectRights } from '../../controllers/ProjectController/projectController.js';
+import { acceptInvitataion, addSerivceToProjectV1, checkValidPartnerCode, createProject, deleteProject, getAllRunningProjectServicebyProjectId, getBacklogForProjectWithTaskV1, getProjectById, getUserAnalyticsAgg, HoraProjectServicesV1, invitationDetails, inviteUserToProject, listUserAccessibleProjects, projectInsightController, projectMemberController, ticketConfigurator, updateProject, updateServiceStatus, userWithProjectRights } from '../../controllers/ProjectController/projectController.js';
 
 
 // const express = require('express');
@@ -21,6 +21,7 @@ projectRoutes.post('/v1/invite/invitaion', authenticateToken, inviteUserToProjec
 // projectRoutes.post('/v1/invite/invitaion-details',  invitationDetails);
 projectRoutes.post('/v1/invite/invitation-details', invitationDetails);
 projectRoutes.post('/v1/invite/invitation-accept', acceptInvitataion);
+projectRoutes.post('/v1/workflow/backlog', authenticateToken, getBacklogForProjectWithTaskV1);
 
 projectRoutes.post("/v1/projects/:projectId/config",authenticateToken,ticketConfigurator)
 projectRoutes.post("/v1/projects/manage",authenticateToken,projectMemberController)

@@ -3,6 +3,8 @@ import { TicketModel } from "../models/TicketModels.js";
 import SprintBoardConfig from "../models/PlatformModel/SprintModels/confrigurator/sprintBoardModel.js"
 import ScrumProjectFlow from "../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js"
 import AnalyticMapping from "../models/AnalyticsModels/AnalyticsMappingFields.js"
+import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
+import { TicketConfig } from "../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 
 export function getWeekNumber(date) {
 
@@ -533,7 +535,6 @@ export const validateScrumFlow = (columns) => {
 
 import { v4 as uuidv4 } from "uuid";
 import User from "../models/UserModel.js";
-import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../models/PlatformModel/UserWorkAccessModel.js";
 
 /**
@@ -932,3 +933,44 @@ export const getFullprojectCurrentWorkdetails = async (projectId, userId) => {
     };
   }
 };
+
+export const getTicketDetailsById = async (ticketId) => {
+  try {
+    const ticket = await TicketModel.findById(ticketId).lean();
+    if (!ticket) return null;
+
+    const [assignee, reporter, project, ticketOtherDetails, sprint] = await Promise.all([
+      getUserDetailById(ticket.assignee),
+      getUserDetailById(ticket.reporter),
+      ProjectModel.findById(ticket.projectId).lean(),
+      TicketConfig.findOne({ projectId: ticket.projectId }).lean(),
+      ticket.sprint ? partnerSprint.findOne({ id: ticket.sprint}).sort({createdAt: -1}).lean() : Promise.resolve(null)
+    ]);
+
+    // Map priority
+    const ticketPriority = ticketOtherDetails?.priorities?.find(
+      (p) => p.id === (Array.isArray(ticket.priority) ? ticket.priority[0] : ticket.priority)
+    );
+
+    // Map labels
+    let ticketLabels = [];
+    if (ticket.labels && ticketOtherDetails?.labels) {
+      const labelIds = Array.isArray(ticket.labels) ? ticket.labels : [ticket.labels];
+      ticketLabels = ticketOtherDetails.labels.filter(l => labelIds.includes(l.id));
+    }
+
+    return {
+      ...ticket,
+      assignee,
+      reporter,
+      project,
+      sprintName: sprint ? sprint.sprintName : null,
+      priority: ticketPriority || ticket.priority,
+      labels: ticketLabels.length > 0 ? ticketLabels : ticket.labels,
+      ticketConfig: ticketOtherDetails || null
+    };
+  } catch (error) {
+    console.error("Error in getTicketDetails:", error);
+    return null;
+  }
+}
