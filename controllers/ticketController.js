@@ -464,12 +464,22 @@ export const updateTicket = async (req, res) => {
     // prevent overriding immutable sequence fields
     delete update.sequenceNumber;
     delete update.ticketKey;
+
+    // Handle mutual exclusivity of sprint and backlogId
+    if (update.sprint) {
+      update.backlogId = null;
+    } else if (update.backlogId) {
+      update.sprint = null;
+    }
+
     const updated = await TicketModel.findByIdAndUpdate(id, update, {
       new: true,
       runValidators: true,
     });
 
-        await ActivityLog.create(
+    if (!updated) return res.status(404).json({ message: "Ticket not found" });
+
+    await ActivityLog.create(
       {
         userId:req.user.userId,
         projectId:updated.projectId,
@@ -481,8 +491,11 @@ export const updateTicket = async (req, res) => {
         },
       }
     )
-    if (!updated) return res.status(404).json({ message: "Ticket not found" });
-    return res.status(200).json(updated);
+
+    return res.status(200).json({
+      ...updated.toObject(),
+      movedTo: updated.backlogId ? 'backlog' : (updated.sprint ? 'sprint' : 'unknown')
+    });
   } catch (err) {
     console.error("Error updating ticket:", err);
     return res.status(500).json({ message: "Internal server error" });
@@ -1117,7 +1130,7 @@ export const getCurrentProjectSprintWork = async(req,res)=>{
     
     if (!sprints || sprints.length === 0) {
       console.log("[getCurrentProjectSprintWork] No active sprints found for project:", projectId);
-      return res.status(404).json({ sprintWork: [], msg: "Sprint not found" });
+      return res.status(200).json({ sprintWork: [], msg: "Sprint not found" });
     }
     
     const latestSprint = sprints[0];
@@ -1227,6 +1240,7 @@ export const getCurrentProjectSprintWork = async(req,res)=>{
     return res.status(200).json({
       success: true,
       sprintName: latestSprint?.sprintName || "",
+      sprintId: latestSprint?.id || latestSprint?._id,
       totalStoryPoint: totalStoryPoint,
       data: projectBoardWithTickets, // Tickets grouped by board columns in an array format
       columns: boardColumns, // Column metadata (colors, etc.)
