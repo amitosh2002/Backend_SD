@@ -330,7 +330,7 @@ export const listTickets = async (req, res) => {
       filters.projectId = {
         $in: normalizeProjectIds(allowed),
       };
-    } else if (allowedProjectIds.size) {
+   } else if (allowedPartnerIds.size && !filters.projectId) {
       filters.projectId = {
         $in: normalizeProjectIds([...allowedProjectIds]),
       };
@@ -1324,6 +1324,7 @@ export const cloneTicket = async(req,res)=>{
     return res.status(500).json({ success: false, message: "Something went wrong" });
   }
 }
+
 
 
 // export const createSubTaskForTickets = as
