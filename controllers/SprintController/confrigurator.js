@@ -1,8 +1,12 @@
-
 import SprintBoardConfigSchema from "../../models/PlatformModel/SprintModels/confrigurator/sprintBoardModel.js"
 import ScrumProjectFlow from "../../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import { buildDropdownConfigFromFlow } from "../../utility/platformUtility.js";
+
+// New Granular Models
+import Status from "../../models/PlatformModel/SprintModels/confrigurator/StatusModel.js";
+import WorkflowTransition from "../../models/PlatformModel/SprintModels/confrigurator/WorkflowTransitionModel.js";
+import BoardColumn from "../../models/PlatformModel/SprintModels/confrigurator/BoardColumnModel.js";
 
 const normalize = (str) => (str || "").toUpperCase().trim().replace(/\s+/g, '_');
 
@@ -247,71 +251,105 @@ export const importFlowFor = async (req, res) => {
 export const getScrumFlowForProject = async (req, res) => {
   try {
     const { projectId } = req.body;
-    // 1️⃣ Project-specific flow
-    let flows = await ScrumProjectFlow.find({
-      projectId,
-      isActive: true,
-      sourceType: "PROJECT",
-    }).sort({ updatedAt: -1 }).lean();
 
-    // 1.5 Clean duplicates if any (only keep the latest one)
-    if (flows.length > 1) {
-      const latestId = flows[0]._id;
-      await ScrumProjectFlow.deleteMany({
-        _id: { $ne: latestId },
-        projectId,
-        sourceType: "PROJECT"
-      });
-    }
+    // 1️⃣ Fetch from new granular collections
+    const [statuses, transitions, columns] = await Promise.all([
+      Status.find({ projectId }).sort({ order: 1 }).lean(),
+      WorkflowTransition.find({ projectId }).lean(),
+      BoardColumn.find({ projectId }).sort({ order: 1 }).lean()
+    ]);
 
-    let flow = flows[0];
+    let finalStatuses = statuses;
+    let finalTransitions = transitions;
+    let finalColumns = columns;
+    let flowName = "Sprint Flow";
+    let flowId = null;
 
-    // 2️⃣ Fallback to TEMPLATE
-    if (!flow) {
-      flow = await ScrumProjectFlow.findOne({
-        projectId: "DEFAULT",
-        isActive: true,
-        sourceType: "TEMPLATE",
+    // 2️⃣ MIGRATION/SEEDING logic: If no granular data exists, fall back to ScrumProjectFlow
+    if (finalStatuses.length === 0 && finalColumns.length === 0) {
+      // Find project flow or template
+      let existingFlow = await ScrumProjectFlow.findOne({ 
+        projectId, 
+        isActive: true, 
+        sourceType: "PROJECT" 
       }).lean();
+
+      if (!existingFlow) {
+        existingFlow = await ScrumProjectFlow.findOne({ 
+          projectId: "DEFAULT", 
+          isActive: true, 
+          sourceType: "TEMPLATE" 
+        }).lean();
+      }
+
+      if (existingFlow) {
+        flowName = existingFlow.flowName;
+        flowId = existingFlow._id;
+        
+        // Convert to new format for processing and potentially seed later
+        finalColumns = (existingFlow.columns || []).sort((a,b) => (a.order||0) - (b.order||0)).map(c => ({
+          ...c,
+          name: normalize(c.name),
+          statusKeys: (c.statusKeys || []).map(k => normalize(k))
+        }));
+
+        const statusSet = new Set();
+        finalColumns.forEach(c => c.statusKeys.forEach(k => statusSet.add(k)));
+        
+        // Seed default statuses if they were missing (important for your 'Manage Statuses' UI)
+        ["OPEN", "IN_PROGRESS", "IN_REVIEW", "DONE", "HOLD", "REOPEN"].forEach(s => statusSet.add(s));
+
+        finalStatuses = Array.from(statusSet).map((s, idx) => ({
+          projectId,
+          key: s,
+          label: s.replace(/_/g, ' '),
+          order: idx,
+          color: finalColumns.find(c => c.statusKeys.includes(s))?.color || "#3b82f6"
+        }));
+
+        finalTransitions = [];
+        Object.entries(existingFlow.workflow || {}).forEach(([from, targets]) => {
+          (targets || []).forEach(to => {
+            finalTransitions.push({ from: normalize(from), to: normalize(to) });
+          });
+        });
+      }
+    } else {
+      // Data exists in new format, get flow id from header record
+      const header = await ScrumProjectFlow.findOne({ projectId, isActive: true }).lean();
+      flowId = header?._id;
+      flowName = header?.flowName || "Sprint Flow";
     }
 
-    if (!flow) {
-      return res.status(404).json({
-        message: "No scrum flow found",
-      });
+    if (finalStatuses.length === 0 && finalColumns.length === 0) {
+      return res.status(404).json({ message: "No scrum flow found" });
     }
 
-    // 3️⃣ Standardize columns: Sort, Normalize and Deduplicate
-    const standardizedColumns = (flow.columns || [])
-      .sort((a, b) => (a.order || 0) - (b.order || 0))
-      .map((col, idx) => ({
-        ...col,
-        name: normalize(col.name),
-        statusKeys: Array.from(new Set((col.statusKeys || []).map(k => normalize(k)))),
-        order: idx
-      }));
+    // 3️⃣ Build format expected by Frontend
+    const standardizedColumns = finalColumns.map((col, idx) => ({
+      ...col,
+      id: col.id || col._id,
+      name: normalize(col.name),
+      statusKeys: Array.from(new Set((col.statusKeys || []).map(k => normalize(k)))),
+      order: col.order ?? idx
+    }));
 
     const statusColors = {};
     const ticketFlowTypes = new Set(["OPEN", "IN_PROGRESS", "IN_REVIEW", "DONE", "HOLD", "REOPEN"]);
     const finalWorkflow = {};
 
-    // Collect all unique statuses for ticketFlowTypes and statusColors
-    standardizedColumns.forEach((col) => {
-      col.statusKeys.forEach(key => {
-        const normKey = normalize(key);
-        ticketFlowTypes.add(normKey);
-        // Prefer the color of the FIRST column the status appears in
-        if (!statusColors[normKey]) {
-          statusColors[normKey] = {
-            bg: `${col.color}22`,
-            text: col.color,
-            border: col.color,
-          };
-        }
-      });
+    // Map status colors and ensure ticketFlowTypes
+    finalStatuses.forEach(s => {
+      const normKey = normalize(s.key);
+      ticketFlowTypes.add(normKey);
+      statusColors[normKey] = {
+        bg: `${s.color || "#3b82f6"}22`,
+        text: s.color || "#3b82f6",
+        border: s.color || "#3b82f6",
+      };
     });
 
-    // A. Add Intra-Column Transitions (Statuses in the same column can move to each other)
+    // A. Add Intra-Column Transitions (same column)
     standardizedColumns.forEach(col => {
       col.statusKeys.forEach(status => {
         const normFrom = normalize(status);
@@ -322,69 +360,34 @@ export const getScrumFlowForProject = async (req, res) => {
       });
     });
 
-    // B. Add explicit status-level transitions (wires)
-    Object.entries(flow.workflow || {}).forEach(([from, targets]) => {
-      const normFrom = normalize(from);
+    // B. Add Explicit Transitions (Wires - Wires might be stored in Transitions or old Flow.workflow)
+    finalTransitions.forEach(t => {
+      const normFrom = normalize(t.from);
+      const normTo = normalize(t.to);
       ticketFlowTypes.add(normFrom);
-      const normTargets = (targets || []).map(t => {
-        const nt = normalize(t);
-        ticketFlowTypes.add(nt);
-        return nt;
-      });
-
-      finalWorkflow[normFrom] = Array.from(new Set([...(finalWorkflow[normFrom] || []), ...normTargets]));
+      ticketFlowTypes.add(normTo);
+      finalWorkflow[normFrom] = Array.from(new Set([...(finalWorkflow[normFrom] || []), normTo]));
     });
 
-    // Ensure all statuses in ticketFlowTypes have a color fallback
+    // Ensure all statuses have color fallbacks
     const defaultPalette = {
-      "OPEN": "#3b82f6",
-      "IN_PROGRESS": "#f59e0b",
-      "IN_REVIEW": "#6366f1",
-      "DONE": "#10b981",
-      "HOLD": "#f59e0b",
-      "REOPEN": "#f97316",
+      "OPEN": "#3b82f6", "IN_PROGRESS": "#f59e0b", "IN_REVIEW": "#6366f1", 
+      "DONE": "#10b981", "HOLD": "#f59e0b", "REOPEN": "#f97316"
     };
-
     ticketFlowTypes.forEach(key => {
       if (!statusColors[key]) {
         const baseColor = defaultPalette[key] || "#64748b";
-        statusColors[key] = {
-          bg: `${baseColor}22`,
-          text: baseColor,
-          border: baseColor
-        };
+        statusColors[key] = { bg: `${baseColor}22`, text: baseColor, border: baseColor };
       }
     });
 
-    // C. Add transitions from column-level wiring
-    Object.entries(flow.columnWorkflow || {}).forEach(([fromColId, targetColIds]) => {
-      const fromCol = standardizedColumns.find(c => c.id === fromColId);
-      if (!fromCol) return;
-
-      const targetStatuses = (targetColIds || []).flatMap(tId => {
-        const tCol = standardizedColumns.find(c => c.id === tId);
-        return tCol ? tCol.statusKeys : [];
-      }).map(s => normalize(s));
-
-      if (targetStatuses.length > 0) {
-        fromCol.statusKeys.forEach(s => {
-          const normFrom = normalize(s);
-          finalWorkflow[normFrom] = Array.from(new Set([...(finalWorkflow[normFrom] || []), ...targetStatuses]));
-        });
-      }
-    });
-
-    // 4️⃣ Default linear fallback (ONLY if no wires at all)
-    const hasStatusWires = Object.keys(flow.workflow || {}).length > 0;
-    const hasColWires = Object.keys(flow.columnWorkflow || {}).length > 0;
-
-    if (!hasStatusWires && !hasColWires && standardizedColumns.length > 1) {
-      // Strictly N -> N+1 fallback
+    // 4️⃣ Default forward fallback (if no wires)
+    const hasTransitions = finalTransitions.length > 0;
+    if (!hasTransitions && standardizedColumns.length > 1) {
       standardizedColumns.forEach((col, idx) => {
         const nextCol = standardizedColumns[idx + 1];
         if (!nextCol) return;
         const nextStatuses = (nextCol.statusKeys || []).map(s => normalize(s));
-        
         col.statusKeys.forEach(status => {
           const normStatus = normalize(status);
           finalWorkflow[normStatus] = Array.from(new Set([...(finalWorkflow[normStatus] || []), ...nextStatuses]));
@@ -392,7 +395,7 @@ export const getScrumFlowForProject = async (req, res) => {
       });
     }
 
-    // Final cleanup: Remove any self-transitions that might have crept in
+    // Final cleanup (self-transitions)
     Object.keys(finalWorkflow).forEach(k => {
       finalWorkflow[k] = (finalWorkflow[k] || []).filter(t => t !== k);
     });
@@ -400,8 +403,8 @@ export const getScrumFlowForProject = async (req, res) => {
     return res.status(200).json({
       projectId,
       source: "FLOW",
-      flowId: flow._id || flow.id,
-      boardName: flow.flowName,
+      flowId,
+      boardName: flowName,
       columns: standardizedColumns,
       statusColors,
       statusWorkflow: finalWorkflow,
@@ -410,9 +413,7 @@ export const getScrumFlowForProject = async (req, res) => {
     });
   } catch (error) {
     console.error("[ScrumFlow] Error:", error);
-    return res.status(500).json({
-      message: "Failed to fetch scrum flow",
-    });
+    return res.status(500).json({ message: "Failed to fetch scrum flow" });
   }
 };
 
@@ -522,7 +523,7 @@ export const UpdateSprintFlowForProject = async (req, res) => {
   try {
     const userId = req.user.userId;
     const { projectId, flowBody } = req.body;
-    const { columns, name } = flowBody;
+    const { columns, name, workflow, columnWorkflow } = flowBody;
 
     // 1. Verify Access
     const hasAccess = await UserWorkAccess.exists({
@@ -536,31 +537,98 @@ export const UpdateSprintFlowForProject = async (req, res) => {
       return res.status(403).json({ msg: "Unauthorized: Insufficient access level" });
     }
 
-    // 2. Normalize Data to UPPERCASE and replace spaces with _
     const normalize = (str) => (str || "").toUpperCase().trim().replace(/\s+/g, '_');
-
     const normalizedName = normalize(name || "DEFAULT_FLOW");
-    const normalizedColumns = (columns || []).map(col => ({
-      ...col,
-      name: normalize(col.name),
-      statusKeys: (col.statusKeys || []).map(k => normalize(k))
-    }));
 
-    const normalizedWorkflow = {};
-    if (flowBody.workflow) {
-      Object.entries(flowBody.workflow).forEach(([from, targets]) => {
-        normalizedWorkflow[normalize(from)] = (targets || []).map(t => normalize(t));
+    // 2. Clear old data to rewrite (Transaction-like behavior)
+    // In a real production app, use actual MongoDB transactions
+    await Promise.all([
+      BoardColumn.deleteMany({ projectId }),
+      WorkflowTransition.deleteMany({ projectId }),
+      Status.deleteMany({ projectId })
+    ]);
+
+    // 3. Save Board Columns and collect status keys
+    const allStatusKeys = new Set();
+    const columnDocs = (columns || []).map((col, idx) => {
+      const normKeys = (col.statusKeys || []).map(k => normalize(k));
+      normKeys.forEach(k => allStatusKeys.add(k));
+      const rawColor = col.color || "#3b82f6";
+      const resolvedColor = typeof rawColor === 'object' ? (rawColor.text || rawColor.bg || "#3b82f6") : (rawColor || "#3b82f6");
+      return {
+        projectId,
+        name: normalize(col.name),
+        statusKeys: normKeys,
+        color: resolvedColor,
+        order: idx,
+        wipLimit: col.wipLimit
+      };
+    });
+    const savedColumns = await BoardColumn.insertMany(columnDocs);
+
+    // 4. Save Workflow Transitions (Wires)
+    const transitionDocs = [];
+    if (workflow) {
+      Object.entries(workflow).forEach(([from, targets]) => {
+        (targets || []).forEach(to => {
+          allStatusKeys.add(normalize(from));
+          allStatusKeys.add(normalize(to));
+          transitionDocs.push({
+            projectId,
+            from: normalize(from),
+            to: normalize(to),
+            type: "forward"
+          });
+        });
       });
     }
 
-    // 3. Perform Update (Upsert ensures no duplicate project flows)
+    // Handle column-level wiring by expanding to all status combinations
+    if (columnWorkflow) {
+      Object.entries(columnWorkflow).forEach(([fromColId, targetColIds]) => {
+        const fromCol = savedColumns.find(c => c._id.toString() === fromColId || c.name === normalize(fromColId));
+        if (!fromCol) return;
+        (targetColIds || []).forEach(tId => {
+          const tCol = savedColumns.find(c => c._id.toString() === tId || c.name === normalize(tId));
+          if (!tCol) return;
+          fromCol.statusKeys.forEach(fKey => {
+            tCol.statusKeys.forEach(tKey => {
+              transitionDocs.push({
+                projectId,
+                from: fKey,
+                to: tKey,
+                type: "forward"
+              });
+            });
+          });
+        });
+      });
+    }
+    if (transitionDocs.length > 0) {
+      await WorkflowTransition.insertMany(transitionDocs);
+    }
+
+    // 5. Save Statuses (Seeding from project usages + defaults)
+    ["OPEN", "IN_PROGRESS", "IN_REVIEW", "DONE", "HOLD", "REOPEN"].forEach(s => allStatusKeys.add(s));
+    
+    const statusDocs = Array.from(allStatusKeys).map((key, idx) => ({
+      projectId,
+      key,
+      label: key.replace(/_/g, ' '),
+      color: savedColumns.find(c => c.statusKeys.includes(key))?.color || "#64748b",
+      category: key === "DONE" ? "done" : (key === "OPEN" ? "todo" : "active"),
+      order: idx
+    }));
+    await Status.insertMany(statusDocs);
+
+    // 6. Update the header record (ScrumProjectFlow) for metadata
     await ScrumProjectFlow.updateOne(
       { projectId }, 
       {
         $set: {
-          columns: normalizedColumns,
           flowName: normalizedName,
-          workflow: normalizedWorkflow,
+          columns: columns || [], // Keep for backward sync if needed
+          workflow: workflow || {},
           updatedBy: userId,
           isActive: true,
           sourceType: "PROJECT"
@@ -574,7 +642,7 @@ export const UpdateSprintFlowForProject = async (req, res) => {
       { upsert: true }
     );
 
-    return res.status(200).json({ msg: "Flow updated successfully (Normalized to UPPERCASE_WITH_UNDERSCORES)" });
+    return res.status(200).json({ msg: "Flow migrated and updated to new architecture successfully" });
 
   } catch (error) {
     console.error("UpdateSprintFlow Error:", error);

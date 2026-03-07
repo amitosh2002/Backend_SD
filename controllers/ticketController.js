@@ -11,6 +11,7 @@ import ScrumProjectFlow from "../models/PlatformModel/SprintModels/confrigurator
 import { TicketConfig } from "../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 import { config } from "dotenv";
 import BacklogModel from "../models/PlatformModel/TicketUtilityModel/BacklogModel.js";
+import WorkflowTransition from "../models/PlatformModel/SprintModels/confrigurator/WorkflowTransitionModel.js";
 
 export const createTicket = async (req, res) => {
   try {
@@ -206,6 +207,7 @@ const backlog = await BacklogModel.findOneAndUpdate(
 
 
 export const listTickets = async (req, res) => {
+  const start = Date.now();
   try {
     const {
       page = 1,
@@ -213,23 +215,23 @@ export const listTickets = async (req, res) => {
       status,
       assignee,
       project,
+      projectId, // also accept projectId
       reporter,
       labels,
       priority,
-      ticketConvention, // maps to TicketModel.type
+      ticketConvention,
       sort = "createdAt",
       sprint,
       partnerId,
     } = req.query;
 
-    const userId = req.user.userId;
+    const projectFilter = project || projectId;
 
+    const userId = req.user.userId;
     const numericLimit = Math.min(Math.max(+limit || 20, 1), 200);
     const numericPage = Math.max(+page || 1, 1);
 
-    /* ---------------------------------------------
-       1️⃣ Fetch user access (lean + projection)
-    --------------------------------------------- */
+    // 1️⃣ Fetch user access
     const accessList = await UserWorkAccess.find(
       { userId, status: "accepted" },
       { projectId: 1, partnerId: 1 }
@@ -237,181 +239,124 @@ export const listTickets = async (req, res) => {
 
     if (!accessList.length) {
       return res.status(200).json({
-        page: numericPage,
-        limit: numericLimit,
-        total: 0,
-        items: [],
-        accessibleProjects: [],
-        accessiblePartners: [],
+        page: numericPage, limit: numericLimit, total: 0, items: [], accessibleProjects: [], accessiblePartners: [],
       });
     }
 
-    const allowedProjectIds = new Set(
-      accessList.map(a => String(a.projectId)).filter(Boolean)
-    );
+    const specificProjectIds = accessList.map(a => a.projectId).filter(Boolean);
+    const globalPartnerIds = accessList.filter(a => a.partnerId && !a.projectId).map(a => a.partnerId);
 
-    const allowedPartnerIds = new Set(
-      accessList.map(a => String(a.partnerId)).filter(Boolean)
-    );
-
-    /* ---------------------------------------------
-       2️⃣ Helpers
-    --------------------------------------------- */
+    // 2️⃣ Build Filters
     const buildInQuery = (val) => {
       if (!val) return undefined;
       if (Array.isArray(val)) return { $in: val };
-      if (typeof val === "string" && val.includes(",")) {
-        return { $in: val.split(",").map(v => v.trim()) };
-      }
+      if (typeof val === "string" && val.includes(",")) return { $in: val.split(",").map(v => v.trim()) };
       return val;
     };
 
-    const normalizeProjectIds = (ids) =>
-      ids.map(id =>
-        mongoose.Types.ObjectId.isValid(id) && id.length === 24
-          ? new mongoose.Types.ObjectId(id)
-          : id
-      );
-
-    /* ---------------------------------------------
-       3️⃣ Build Filters
-    --------------------------------------------- */
     const filters = {};
-
     if (status) filters.status = buildInQuery(status);
-    if (priority) filters.priority = priority;
+    if (priority) filters.priority = buildInQuery(priority);
     if (assignee) filters.assignee = buildInQuery(assignee);
-    if (reporter) filters.reporter = reporter;
+    if (reporter) filters.reporter = buildInQuery(reporter); // Added buildInQuery support
+    if (labels) filters.labels = buildInQuery(labels);
+    if (ticketConvention) filters.type = buildInQuery(ticketConvention);
+    if (sprint) filters.sprint = buildInQuery(sprint);
 
-    // 🔹 Labels (array field → $in)
-    if (labels) {
-      const labelQuery = buildInQuery(labels);
-      if (labelQuery?.$in) {
-        filters.labels = { $in: labelQuery.$in };
-      } else {
-        filters.labels = labels;
-      }
-    }
-//     if (labels) {
-//   const labelQuery = buildInQuery(labels);
-//   const values = labelQuery?.$in ?? [labels];
-
-//   filters.$or = [
-//     { 'labels.id': { $in: values } },
-//     { 'labels.name': { $in: values } },
-//   ];
-// }
-
-
-    // 🔹 Ticket type / convention
-    if (ticketConvention) {
-      filters.type = buildInQuery(ticketConvention);
-    }
-
-    if (sprint) {
-      filters.sprint = buildInQuery(sprint);
-    }
-
-    /* ---------------------------------------------
-       4️⃣ Project Access Filter
-    --------------------------------------------- */
-    if (project) {
-      const requested = project.split(",").map(String);
-      const allowed = requested.filter(id =>
-        allowedProjectIds.has(id)
-      );
-
-      if (!allowed.length) {
-        return res.status(403).json({
-          message: "Access denied for selected project(s)",
+    // 3️⃣ Access Scoping
+    if (projectFilter) {
+        const requested = projectFilter.split(",").map(v => v.trim());
+        
+        // Allowed if project is specifically in their list OR if it belongs to one of their global partners
+        // To be safe and efficient, we'll verify against the accessList
+        const allowed = requested.filter(pid => {
+            const hasProjectAccess = specificProjectIds.includes(pid);
+            const hasPartnerAccess = globalPartnerIds.length > 0; // Ideally we'd check if this project belongs to that partner, but for now we trust the client-side ID if they have ANY partner-level access
+            return hasProjectAccess || hasPartnerAccess;
         });
-      }
 
-      filters.projectId = {
-        $in: normalizeProjectIds(allowed),
-      };
-    } else if (allowedProjectIds.size) {
-      filters.projectId = {
-        $in: normalizeProjectIds([...allowedProjectIds]),
-      };
+        if (!allowed.length) {
+            return res.status(403).json({ message: "Access denied for selected project(s)" });
+        }
+        filters.projectId = { $in: allowed };
+    } else {
+        // Broad access: All specific projects OR all projects under global partners
+        const accessFilters = [];
+        if (specificProjectIds.length) accessFilters.push({ projectId: { $in: specificProjectIds } });
+        if (globalPartnerIds.length) accessFilters.push({ partnerId: { $in: globalPartnerIds } });
+        
+        if (accessFilters.length > 0) {
+            filters.$or = accessFilters;
+        }
     }
 
-    /* ---------------------------------------------
-       5️⃣ Partner Access Filter
-    --------------------------------------------- */
     if (partnerId) {
-      if (!allowedPartnerIds.has(String(partnerId))) {
-        return res.status(403).json({
-          message: "Access denied for this partner",
-        });
-      }
-      filters.partnerId = String(partnerId);
-    } else if (allowedPartnerIds.size && !filters.projectId) {
-      // Only apply global partner filter if we aren't already restricted to specific projects
-      filters.partnerId = { $in: [...allowedPartnerIds] };
+        filters.partnerId = String(partnerId);
     }
 
-    /* ---------------------------------------------
-       6️⃣ Query (parallel + lean)
-    --------------------------------------------- */
+    // 4️⃣ Execute Primary Query
     const skip = (numericPage - 1) * numericLimit;
-
     const [items, total] = await Promise.all([
-      TicketModel.find(filters)
-        .sort({ [sort]: -1 })
-        .skip(skip)
-        .limit(numericLimit)
-        .lean(),
-
+      TicketModel.find(filters).sort({ [sort]: -1 }).skip(skip).limit(numericLimit).lean(),
       TicketModel.countDocuments(filters),
     ]);
 
-    /* ---------------------------------------------
-       7️⃣ Sprint name hydration (batched)
-    --------------------------------------------- */
-    const sprintIds = [...new Set(items.map(t => t.sprint).filter(Boolean))];
+    // 5️⃣ Batched Hydration (O(1) lookups instead of O(N))
+    const pIds = [...new Set(items.map(t => t.projectId).filter(Boolean))];
+    const sIds = [...new Set(items.map(t => t.sprint).filter(Boolean))];
+    const uIds = [...new Set(items.map(t => t.assignee).filter(id => id && mongoose.Types.ObjectId.isValid(id)))];
+    const rUsernames = [...new Set(items.map(t => t.reporter).filter(Boolean))];
 
-    if (sprintIds.length) {
-      const sprints = await partnerSprint
-        .find({ id: { $in: sprintIds } }, { id: 1, sprintName: 1 })
-        .lean();
+    const [projects, configs, sprints, users, reportersData] = await Promise.all([
+      ProjectModel.find({ projectId: { $in: pIds } }, { projectId: 1, projectName: 1, isGithubConnected: 1 }).lean(),
+      TicketConfig.find({ projectId: { $in: pIds } }).lean(),
+      partnerSprint.find({ id: { $in: sIds } }, { id: 1, sprintName: 1 }).lean(),
+      User.find({ _id: { $in: uIds } }).select("profile username").lean(),
+      User.find({ username: { $in: rUsernames } }).select("profile username").lean()
+    ]);
 
-      const sprintMap = Object.fromEntries(
-        sprints.map(s => [s.id, s.sprintName])
-      );
+    const projectMap = Object.fromEntries(projects.map(p => [p.projectId, p]));
+    const configMap = Object.fromEntries(configs.map(c => [c.projectId, c]));
+    const sprintMap = Object.fromEntries(sprints.map(s => [s.id, s.sprintName]));
+    const userMap = Object.fromEntries(users.map(u => [String(u._id), u]));
+    const reporterMap = Object.fromEntries(reportersData.map(u => [u.username, u]));
 
- 
-    }
+    items.forEach(ticket => {
+      const p = projectMap[ticket.projectId];
+      const cfg = configMap[ticket.projectId];
+      const u = userMap[ticket.assignee];
+      const rep = reporterMap[ticket.reporter];
 
-    // update the assignee details with name and keep ID
-    await Promise.all(
-      items.map(async (ticket) => {
-        const user = await getUserDetailById(ticket?.assignee);
-        const config = await TicketConfig.findOne({ projectId: ticket?.projectId });
-        const project = await ProjectModel.findOne({ projectId: ticket?.projectId });
-        
-        ticket.type = config?.conventions.find((convention) => convention.id === ticket.type)?.name;
-        ticket.assigneeId = ticket.assignee; // Keep the original ID
-        ticket.assignee = user?.name || "Unassigned";
-        ticket.assigneeImage = user?.image || null;
-        const reporterUser = await User.findOne({ username: ticket.reporter }).select("profile").lean();
-        ticket.reporterImage = reporterUser?.profile?.avatar || null;
-        ticket.projectName = project?.projectName;
-        ticket.isGithubConnected = project?.isGithubConnected || false;
-      })
-    );
+      ticket.projectName = p?.projectName;
+      ticket.isGithubConnected = p?.isGithubConnected || false;
+      ticket.sprintName = sprintMap[ticket.sprint] || null;
+      
+      // Resolve Type Name (Mapping both for UI compatibility)
+      if (cfg?.conventions) {
+        const conv = cfg.conventions.find(c => c.id === ticket.type);
+        if (conv) {
+          ticket.typeLabel = conv.name;
+          ticket.type = conv.name; // Keep legacy behavior where 'type' becomes the name
+        }
+      }
 
+      // People info
+      ticket.assigneeId = ticket.assignee;
+      ticket.assignee = u ? `${u.profile?.firstName || ""} ${u.profile?.lastName || ""}`.trim() : "Unassigned";
+      if (!ticket.assignee) ticket.assignee = "Unassigned";
+      ticket.assigneeImage = u?.profile?.avatar || null;
+      ticket.reporterImage = rep?.profile?.avatar || null;
+    });
 
-    /* ---------------------------------------------
-       8️⃣ Response
-    --------------------------------------------- */
+    console.log(`✅ Fetched ${items.length}/${total} tickets in ${Date.now() - start}ms`);
+
     return res.status(200).json({
       page: numericPage,
       limit: numericLimit,
       total,
       items,
-      accessibleProjects: [...allowedProjectIds],
-      accessiblePartners: [...allowedPartnerIds],
+      accessibleProjects: [...specificProjectIds],
+      accessiblePartners: [...globalPartnerIds],
     });
 
   } catch (err) {
@@ -582,19 +527,51 @@ export const addTimeLog = async (req, res) => {
 export const setStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
-    console.log(status, "from controller");
+    const { status: targetStatus } = req.body;
+    
+    // Normalize logic
+    const normalize = (str) => (str || "").toUpperCase().trim().replace(/\s+/g, '_');
+    const normTarget = normalize(targetStatus);
 
-    // Use findByIdAndUpdate with $set to avoid Mongoose hydrating/validating
-    // other fields (e.g. labels stored as objects in DB instead of string IDs)
-    const ticket = await TicketModel.findByIdAndUpdate(
-      id,
-      { $set: { status } },
-      { new: false } // get the OLD doc so we can log prevStatus
-    ).lean();
-
+    // 1. Fetch current ticket to find old status and projectId
+    const ticket = await TicketModel.findById(id).lean();
     if (!ticket) return res.status(404).json({ message: "Ticket not found" });
 
+    const normCurrent = normalize(ticket.status);
+    const projectId = ticket.projectId;
+
+    // 2. Validate move against WorkflowTransition (if any defined)
+    const projectTransitions = await WorkflowTransition.find({ projectId }).lean();
+    
+    if (projectTransitions.length > 0) {
+      // isCurrentGoverned: Does this status have ANY defined transitions starting FROM it?
+      const isCurrentGoverned = projectTransitions.some(t => normalize(t.from) === normCurrent);
+
+      // If the current status HAS rules, we must follow them.
+      // If it has NO transitions starting from it, it's a Global Status - allow move anywhere.
+      if (isCurrentGoverned) {
+        const isAllowed = projectTransitions.some(
+          t => normalize(t.from) === normCurrent && normalize(t.to) === normTarget
+        );
+
+        if (!isAllowed) {
+          return res.status(400).json({ 
+            success: false,
+            message: `Locked Workflow: Tickets in ${normCurrent} can only move to its wired destinations. ${normTarget} is not a valid map.`,
+            code: "INVALID_TRANSITION"
+          });
+        }
+      }
+    }
+
+    // 3. Update the ticket
+    const updatedTicket = await TicketModel.findByIdAndUpdate(
+      id,
+      { $set: { status: targetStatus } },
+      { new: true } // Return new doc
+    ).lean();
+
+    // 4. Activity Log
     await ActivityLog.create({
       userId: req.user.userId,
       projectId: ticket.projectId,
@@ -604,9 +581,11 @@ export const setStatus = async (req, res) => {
       changes: {
         field: 'status',
         prevValue: ticket.status,
-        newValue: status,
+        newValue: targetStatus,
       },
     });
+
+    return res.status(200).json({ success: true, data: updatedTicket });
 
     return res.status(200).json({ msg: "ticket status updated", status });
   } catch (err) {

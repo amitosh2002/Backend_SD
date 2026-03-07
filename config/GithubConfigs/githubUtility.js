@@ -158,22 +158,40 @@ export function verifyGithubSignature(req) {
     return false;
   }
 
-  const payload = req.body;
+  // To properly verify HMAC, we need the raw string or buffer. 
+  // If express already parsed it into an object, we use stringify (though rawBody is preferred)
+  let payloadStr;
+  if (req.rawBody) {
+    payloadStr = req.rawBody;
+  } else if (typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+    payloadStr = JSON.stringify(req.body);
+  } else {
+    payloadStr = req.body;
+  }
+
+  if (!payloadStr) {
+     console.warn("[verifyGithubSignature] Empty payload");
+     return false;
+  }
 
   const hmac = crypto
     .createHmac('sha256', process.env.GITHUBWEBHOOK_SECRET)
-    .update(payload)
+    .update(payloadStr)
     .digest('hex');
 
   const expected = `sha256=${hmac}`;
 
-  const isValid = crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expected)
-  );
-
-  console.log("[verifyGithubSignature] Signature valid:", isValid);
-  return isValid;
+  try {
+    const isValid = crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expected)
+    );
+    console.log("[verifyGithubSignature] Signature valid:", isValid);
+    return isValid;
+  } catch (err) {
+    console.error("[verifyGithubSignature] timingSafeEqual Error:", err.message);
+    return false;
+  }
 }
 
 
