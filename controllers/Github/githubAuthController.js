@@ -640,7 +640,9 @@ export const webhookHandler =async (req, res) => {
     // 2️⃣ Read event
     const event = req.headers['x-github-event'];
     console.log("[webhookHandler] Event type:", event);
-    const payload = JSON.parse(req.body.toString());
+    const payload = (typeof req.body === 'object' && !Buffer.isBuffer(req.body)) 
+      ? req.body 
+      : JSON.parse(req.body.toString());
 
     // 3️⃣ Route events
     switch (event) {
