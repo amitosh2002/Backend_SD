@@ -942,7 +942,7 @@ export const getTicketDetailsById = async (ticketId) => {
     const [assignee, reporter, project, ticketOtherDetails, sprint] = await Promise.all([
       getUserDetailById(ticket.assignee),
       getUserDetailById(ticket.reporter),
-      ProjectModel.findById(ticket.projectId).lean(),
+      ProjectModel.find({projectId:ticket.projectId}).lean(),
       TicketConfig.findOne({ projectId: ticket.projectId }).lean(),
       ticket.sprint ? partnerSprint.findOne({ id: ticket.sprint}).sort({createdAt: -1}).lean() : Promise.resolve(null)
     ]);
