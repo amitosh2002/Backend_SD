@@ -20,12 +20,20 @@ router.post("/key-flow/update",authenticateToken,UpdateSprintFlowForProject)
 
 //============================= Board route ==================//
 router.post("/key-board",authenticateToken,getSprintBoardForProject)
-
 router.post("/board",authenticateToken, createBoardConfig);
 router.get("/board/:projectId",authenticateToken, getBoardConfigByProject);
 router.post("/key-board/update", authenticateToken,saveOrUpdateProjectBoard);
 router.post("/board/import", authenticateToken,importBoardFromProject);
 //============================= Board route ==================//
+
+/* ========= V2 GRANULAR FLOW ========= */
+import { getProjectFlowV2, updateProjectFlowV2, getKanbanBoardV2, validateTransitionV2 } from "../../controllers/SprintController/confriguratorV2.js";
+
+router.post("/v2/key-flow", authenticateToken, getProjectFlowV2);
+router.post("/v2/key-flow/update", authenticateToken, updateProjectFlowV2);
+router.post("/v2/kanban", authenticateToken, getKanbanBoardV2);
+router.post("/v2/validate", authenticateToken, validateTransitionV2);
+/* =================================== */
 
 export default router;
 

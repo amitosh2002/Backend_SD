@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 const BranchAnalyticsSchema = new mongoose.Schema({
-  repoId: { type: String, index: true, required: true },
+  repoId: { type: String, required: true },
   branchName: { type: String, required: true },
   branchCreator: {
     id: String,

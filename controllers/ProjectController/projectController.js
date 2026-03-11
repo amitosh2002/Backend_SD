@@ -19,6 +19,7 @@ import ProjectService from "../../models/PlatformModel/ProjectServiceSchema.js";
 import ScrumProjectFlow from "../../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import SprintBoardConfig from "../../models/PlatformModel/SprintModels/confrigurator/sprintBoardModel.js";
 import BacklogModel from "../../models/PlatformModel/TicketUtilityModel/BacklogModel.js";
+import { createBulkNotification } from "../../utility/notificationUtility.js";
 
 // import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
@@ -308,6 +309,7 @@ export const userWithProjectRights = async (req, res) => {
         projectArray.push({
           id: proj.projectId,
           name: proj.name?? proj.projectName,
+          accessLevel: access.accessType,
         }
       );
       }
@@ -326,10 +328,11 @@ export const userWithProjectRights = async (req, res) => {
 };
 
 export const inviteUserToProject = async (req, res) => {
-  const { projectId, emails, accessType, message, invitedBy } = req.body
-;
-
+  const { projectId, emails, accessType, message } = req.body;
+  const userId = req.user.userId;// this is the user who is inviting
   console.log("first controller call")
+  let invitedBy = userId;
+
 
   try {
     // -------------------------
@@ -383,7 +386,7 @@ export const inviteUserToProject = async (req, res) => {
       await UserWorkAccess.create({
         projectId,
         partnerId,
-        invitedBy,
+        invitedBy:userId,
         accessType: accessType || 100,
         status: "pending",
         userId: null,
@@ -393,7 +396,7 @@ export const inviteUserToProject = async (req, res) => {
       // Save Invitation Tracking
       const inviteRes = await InvitationTracking.create({
         email,
-        invitedBy,
+        invitedBy:userId,
         projectId,
         partnerId,
         revoked: false,
@@ -526,7 +529,7 @@ export const invitationDetails = async (req, res) => {
     // const { invitedBy, projectId } = req.body;
     const invitedBy=req.body.invitedBy;
     const projectId=req.body.projectId;
-
+    console.log(req.body,"req.body")
     // Validation
     if (!invitedBy || !projectId) {
       return res.status(400).json({
@@ -1416,7 +1419,7 @@ export const getBacklogForProjectWithTaskV1 = async (req, res) => {
 
     const [projectBacklogs, project] = await Promise.all([
       BacklogModel.find({ projectId, isDeleted: false }),
-      ProjectModel.find({projectId})
+      ProjectModel.findOne({ projectId })
     ]);
 
     const backlogData = await Promise.all(
@@ -1434,7 +1437,7 @@ export const getBacklogForProjectWithTaskV1 = async (req, res) => {
         );
 
         return {
-          title: backlog.projectName || backlog.title,
+          title: backlog.title || backlog.projectName,
           id: backlog.id,
           tickets
         };
@@ -1459,3 +1462,109 @@ export const getBacklogForProjectWithTaskV1 = async (req, res) => {
     });
   }
 };
+
+export const createBacklogController = async (req, res) => {
+  try {
+    const { projectId, title } = req.body;
+    const userId = req.user.userId;
+
+    if (!projectId || !title) {
+      return res.status(400).json({
+        success: false,
+        msg: "Project ID and title are required"
+      });
+    }
+
+    const project = await ProjectModel.findOne({ projectId });
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        msg: "Project not found"
+      });
+    }
+
+    const newBacklog = await BacklogModel.create({
+      projectId,
+      title,
+      projectName: project.projectName || project.name,
+      createdBy: userId
+    });
+
+    return res.status(201).json({
+      success: true,
+      data: newBacklog,
+      msg: "Backlog created successfully"
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      msg: "Server error"
+    });
+  }
+};
+
+export const addUserToProjectV1 = async (req, res) => {
+    try {
+        const { projectId, targetUserEmail, role} = req.body;
+        const invitedBy = req.user.userId;
+
+        if(!projectId || !targetUserEmail || !role){
+            return res.status(400).json({
+                success: false,
+                msg: "Project ID, email and access type are required"
+            });
+        }
+
+        const [user,requestedBy] = await Promise.all([
+            User.findOne({email:targetUserEmail}),
+            User.findById(invitedBy)
+        ])
+
+        if(!user){
+            return res.status(404).json({
+                success: false,
+                msg: "User not found"
+            });
+        }
+
+        const project = await ProjectModel.findOne({projectId})
+        if(!project){
+            return res.status(404).json({
+                success: false,
+                msg: "Project not found"
+            });
+        }
+
+        const userWorkAccess = await UserWorkAccess.create({
+            projectId,
+            userId: user._id,
+            accessType:role,
+            invitedBy:requestedBy.email,
+            status:"accepted"
+
+        })
+
+        await createBulkNotification({
+          title:"Project Invitation",
+          message:`${requestedBy.username} added you to ${project.projectName}`,
+          type:"project",
+          userId:user._id,
+          projectId:projectId,
+        })  
+
+        return res.status(201).json({
+            success: true,
+            data: userWorkAccess,
+            msg: "User added to project successfully"
+        })
+    } catch (error) {
+        console.error("Error in addUserToProjectV1:", error);
+        res.status(500).json({ 
+            success: false, 
+            message: "Failed to add user to project", 
+            error: error.message 
+        });
+    }
+}
