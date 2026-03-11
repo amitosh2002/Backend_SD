@@ -1161,7 +1161,6 @@ export const getCurrentProjectSprintWork = async(req,res)=>{
     const ticketsData = await Promise.all(
       sprintWork.map(async (currElem) => {
         const ticketDetails = await getTicketDetailsById(currElem._id || currElem.id);
-        
         return {
           ...ticketDetails,
           // Store normalized status for easier mapping (strip spaces, underscores, hyphens)

@@ -7,6 +7,8 @@ import partnerSprint from "../../models/PlatformModel/SprintModels/partnerSprint
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import { TicketModel } from "../../models/TicketModels.js";
 import { getAppSprintAnalytics, getSprintContext } from "../../utility/platformUtility.js";
+import SprintClosingRule from "../../models/PlatformModel/SprintModels/confrigurator/sprintClosingRuleModel.js";
+import BacklogModel from "../../models/PlatformModel/TicketUtilityModel/BacklogModel.js";
 
 // CREATE SPRINT
 export const createSprint = async (req, res) => {
@@ -51,6 +53,7 @@ export const createSprint = async (req, res) => {
        2️⃣ Check Project Exists
     ================================= */
     const projectDetails = await ProjectModel.findOne({ projectId });
+    console.log(projectDetails);
 
     if (!projectDetails) {
       return res.status(404).json({
@@ -112,7 +115,7 @@ export const createSprint = async (req, res) => {
        6️ Create Sprint (Atomic)
     ================================= */
     const sprint = await partnerSprint.create({
-      partnerId: projectDetails.partnerId,
+      partnerId: projectDetails?.partnerId,
       projectId,
       sprintName: sprintName ??  "",
       startDate: start,
@@ -299,6 +302,40 @@ export const deactivateSprint = async (req, res) => {
       });
     }
 
+    const { targetBacklogId } = req.body;
+    const { projectId } = sprint;
+
+    // 1. Fetch closing rules for this project
+    const closingRules = await SprintClosingRule.findOne({ projectId });
+    const moveStatuses = closingRules?.moveStatuses || [];
+    const blockingKeys = closingRules?.blockingKeys || [];
+    
+    // Statuses that MUST be moved (not considered 'Done')
+    const migrationStatuses = [...new Set([...moveStatuses, ...blockingKeys])];
+
+    // 2. Identify target backlog if not provided
+    let finalTargetBacklogId = targetBacklogId;
+    if (!finalTargetBacklogId) {
+      const defaultBacklog = await BacklogModel.findOne({ projectId, isDeleted: false });
+      finalTargetBacklogId = defaultBacklog?.id;
+    }
+
+    // 3. Move tickets in migration statuses to target backlog
+    if (finalTargetBacklogId && migrationStatuses.length > 0) {
+      await TicketModel.updateMany(
+        { 
+          sprint: sprintId, 
+          status: { $in: migrationStatuses } 
+        },
+        { 
+          $set: { 
+            sprint: null, 
+            backlogId: finalTargetBacklogId 
+          } 
+        }
+      );
+    }
+
     sprint.isActive = false;
     sprint.endDate= new Date()
     sprint.status="COMPLETED";
@@ -311,6 +348,33 @@ export const deactivateSprint = async (req, res) => {
     });
   } catch (error) {
     console.error("Error deactivating sprint:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+export const deleteSprint = async (req, res) => {
+  try {
+    const { sprintId } = req.params;
+
+    const sprint = await partnerSprint.findOne({ id: sprintId });
+
+    if (!sprint) {
+      return res.status(404).json({
+        success: false,
+        message: "Sprint not found",
+      });
+    }
+
+    // delete sprint and remove sprint references from tickets
+    await partnerSprint.deleteOne({ id: sprintId });
+    await TicketModel.updateMany({ sprint: sprintId }, { $set: { sprint: null, backlogId: null } });
+
+    return res.status(200).json({
+      success: true,
+      message: "Sprint deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting sprint:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
 };
@@ -536,6 +600,68 @@ export const startSprintManually = async (req, res) => {
     return res.status(500).json({
       success: false,
       error: error.message
+    });
+  }
+};
+
+
+export const getSprintClosingRulesDatas = async (req, res) => {
+  try {
+    const { projectId } = req.params;
+
+    const sprintClosingRules = await SprintClosingRule.findOne({ projectId });
+
+    if (!sprintClosingRules) {
+      return res.status(404).json({
+        success: false,
+        message: "Sprint closing rules not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      sprintClosingRules,
+    });
+  } catch (error) {
+    console.error("Error getting sprint closing rules:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+};
+
+export const updateSprintClosingRulesData = async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { blockingKeys, moveStatuses } = req.body;
+
+    let rules = await SprintClosingRule.findOne({ projectId });
+    if (!rules) {
+      rules = new SprintClosingRule({
+        projectId,
+        blockingKeys: blockingKeys || [],
+        moveStatuses: moveStatuses || [],
+        createdBy: req.user.userId,
+        updatedBy: req.user.userId,
+      });
+    } else {
+      rules.blockingKeys = blockingKeys || [];
+      rules.moveStatuses = moveStatuses || [];
+      rules.updatedBy = req.user.userId;
+    }
+    
+    await rules.save();
+
+    return res.status(200).json({
+      success: true,
+      sprintClosingRules: rules,
+    });
+  } catch (error) {
+    console.error("Error updating sprint closing rules:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message,
     });
   }
 };

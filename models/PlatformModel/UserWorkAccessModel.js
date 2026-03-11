@@ -23,7 +23,7 @@ const UserWorkAccessSchema = new mongoose.Schema({
     default:null
   },
   invitedBy: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: String,
     ref: "User",
     required: false,
   },

@@ -378,3 +378,20 @@ export const sendreportFordiscord = async (req, res) => {
         res.status(500).json({ success: false, message: "Failed to send report", error: error.message });
     }
 }
+
+export const getUserFromEmailV1 = async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+        return res.status(400).json({ success: false, message: "Email is required" });
+    }
+    try {
+        const user = await User.findOne({ email }).select("profile username email _id");
+        if (!user) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+        res.status(200).json({ success: true, data: user });
+    } catch (error) {
+        console.error("Error fetching user from email V1:", error);
+        res.status(500).json({ success: false, message: "Failed to fetch user", error: error.message });
+    }
+}
