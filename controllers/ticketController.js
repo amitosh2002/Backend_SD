@@ -223,6 +223,7 @@ export const listTickets = async (req, res) => {
       sort = "createdAt",
       sprint,
       partnerId,
+      query,
     } = req.query;
 
     const projectFilter = project || projectId;
@@ -246,7 +247,7 @@ export const listTickets = async (req, res) => {
     const specificProjectIds = accessList.map(a => a.projectId).filter(Boolean);
     const globalPartnerIds = accessList.filter(a => a.partnerId && !a.projectId).map(a => a.partnerId);
 
-    // 2️⃣ Build Filters
+    // 2️⃣ Build Base Conditions
     const buildInQuery = (val) => {
       if (!val) return undefined;
       if (Array.isArray(val)) return { $in: val };
@@ -254,50 +255,103 @@ export const listTickets = async (req, res) => {
       return val;
     };
 
-    const filters = {};
-    if (status) filters.status = buildInQuery(status);
-    if (priority) filters.priority = buildInQuery(priority);
-    if (assignee) filters.assignee = buildInQuery(assignee);
-    if (reporter) filters.reporter = buildInQuery(reporter); // Added buildInQuery support
-    if (labels) filters.labels = buildInQuery(labels);
-    if (ticketConvention) filters.type = buildInQuery(ticketConvention);
-    if (sprint) filters.sprint = buildInQuery(sprint);
+    const conditions = [];
+    
+    // Basic Filters
+    if (status) conditions.push({ status: buildInQuery(status) });
+    if (priority) conditions.push({ priority: buildInQuery(priority) });
+    
+    // Assignee / Unassigned Filter
+    if (assignee) {
+      // Normalize to uppercase for accurate checks
+      const assigneeValues = Array.isArray(assignee) ? assignee : (typeof assignee === "string" ? assignee.split(",").map(v => v.trim()) : [assignee]);
+      // The frontend sends "UNASSIGNED", converting all matches to upper just for the if-condition checks so it is case-insensitive.
+      const hasUnassigned = assigneeValues.some(v => v?.toUpperCase() === "UNASSIGNED");
+      const otherAssignees = assigneeValues.filter(v => v?.toUpperCase() !== "UNASSIGNED" && v !== "");
 
-    // 3️⃣ Access Scoping
+      if (hasUnassigned && otherAssignees.length > 0) {
+        // Includes actual strings the DB might use, along with empty conditions
+        conditions.push({ $or: [ { assignee: { $in: otherAssignees } }, { assignee: { $in: [null, undefined, "", "Unassigned", "UNASSIGNED", "unassigned"] } }, { assignee: { $exists: false } } ] });
+      } else if (hasUnassigned) {
+        conditions.push({ $or: [ { assignee: { $in: [null, undefined, "", "Unassigned", "UNASSIGNED", "unassigned"] } }, { assignee: { $exists: false } } ] });
+      } else if (otherAssignees.length > 0) {
+        conditions.push({ assignee: { $in: otherAssignees } });
+      }
+    }
+
+    if (reporter) conditions.push({ reporter: buildInQuery(reporter) }); 
+    if (labels) conditions.push({ labels: buildInQuery(labels) });
+    if (ticketConvention) conditions.push({ type: buildInQuery(ticketConvention) });
+
+    // 3️⃣ Sprint / Backlog Filter
+    if (sprint) {
+      const sprintValues = Array.isArray(sprint) ? sprint : (typeof sprint === "string" ? sprint.split(",").map(v => v.trim()) : [sprint]);
+      const hasBacklog = sprintValues.includes("backlog");
+      const otherSprints = sprintValues.filter(v => v !== "backlog" && v !== "");
+
+      if (hasBacklog && otherSprints.length > 0) {
+        conditions.push({ $or: [ { sprint: { $in: otherSprints } }, { sprint: { $in: [null, undefined, ""] } } ] });
+      } else if (hasBacklog) {
+        conditions.push({ sprint: { $in: [null, undefined, ""] } });
+      } else if (otherSprints.length > 0) {
+        conditions.push({ sprint: { $in: otherSprints } });
+      }
+    }
+
+    // 4️⃣ Access Scoping
+    let accessCondition = {};
     if (projectFilter) {
         const requested = projectFilter.split(",").map(v => v.trim());
-        
-        // Allowed if project is specifically in their list OR if it belongs to one of their global partners
-        // To be safe and efficient, we'll verify against the accessList
         const allowed = requested.filter(pid => {
             const hasProjectAccess = specificProjectIds.includes(pid);
-            const hasPartnerAccess = globalPartnerIds.length > 0; // Ideally we'd check if this project belongs to that partner, but for now we trust the client-side ID if they have ANY partner-level access
+            const hasPartnerAccess = globalPartnerIds.length > 0; 
             return hasProjectAccess || hasPartnerAccess;
         });
 
         if (!allowed.length) {
             return res.status(403).json({ message: "Access denied for selected project(s)" });
         }
-        filters.projectId = { $in: allowed };
+        accessCondition = { projectId: { $in: allowed } };
     } else {
-        // Broad access: All specific projects OR all projects under global partners
         const accessFilters = [];
         if (specificProjectIds.length) accessFilters.push({ projectId: { $in: specificProjectIds } });
         if (globalPartnerIds.length) accessFilters.push({ partnerId: { $in: globalPartnerIds } });
-        
         if (accessFilters.length > 0) {
-            filters.$or = accessFilters;
+            accessCondition = { $or: accessFilters };
         }
+    }
+    conditions.push(accessCondition);
+
+    // 5️⃣ Search Query
+    if (query) {
+      const searchRegex = new RegExp(query, 'i');
+      conditions.push({
+        $or: [
+          { title: { $regex: searchRegex } },
+          { description: { $regex: searchRegex } },
+          { ticketKey: { $regex: searchRegex } }
+        ]
+      });
     }
 
     if (partnerId) {
-        filters.partnerId = String(partnerId);
+        conditions.push({ partnerId: String(partnerId) });
     }
 
-    // 4️⃣ Execute Primary Query
+    // Final merge
+    const filters = conditions.length > 0 ? { $and: conditions } : {};
+
+    // 6️⃣ Execute Primary Query
+    let sortObj = { createdAt: -1 }; 
+    if (sort) {
+      const isAsc = sort.endsWith('_asc');
+      const sortField = isAsc ? sort.replace('_asc', '') : sort;
+      sortObj = { [sortField]: isAsc ? 1 : -1 };
+    }
+
     const skip = (numericPage - 1) * numericLimit;
     const [items, total] = await Promise.all([
-      TicketModel.find(filters).sort({ [sort]: -1 }).skip(skip).limit(numericLimit).lean(),
+      TicketModel.find(filters).sort(sortObj).skip(skip).limit(numericLimit).lean(),
       TicketModel.countDocuments(filters),
     ]);
 
@@ -1067,13 +1121,22 @@ export const getSortKeyValues= async (req,res)=>{
     const uniquePriority = getCleanUniqueItems(ticketConfig, 'priorities', ['id', 'name', 'color']);
     const uniqueTicketConvention = getCleanUniqueItems(ticketConfig, 'conventions', ['id',  'color', 'suffix']);
 
-    console.log("[getSortKeyValues] Successfully aggregated sort keys. StatusCount:", uniqueStatus.length, "UsersCount:", uniqueUsers.length);
+    const sprints = await partnerSprint.find({ projectId: { $in: projectIds } }).sort({ createdAt: -1 }).limit(2).lean();
+
+    // Prepare sprints for dropdown: add a "Backlog" option and map the rest
+    const sprintOptions = [
+      { _id: "backlog", sprintName: "Backlog" },
+      ...(sprints || [])
+    ];
+
+    console.log("[getSortKeyValues] Successfully aggregated sort keys. StatusCount:", uniqueStatus.length, "UsersCount:", uniqueUsers.length, "SprintsCount:", sprintOptions.length);
 
     return res.status(200).json({
       success: true,
       users: uniqueUsers,
       status: uniqueStatus,
       projects: projects,
+      sprints: sprintOptions,
       labels: uniqueLabels,
       priority: uniquePriority,
       ticketConvention: uniqueTicketConvention,
