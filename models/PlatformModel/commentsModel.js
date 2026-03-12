@@ -1,12 +1,14 @@
 import mongoose from "mongoose";
-import { uuid } from "uuidv4";
+import { v4 as uuidv4 } from "uuid";
 
 const Comments = new mongoose.Schema({
 
-    id:{
-        type:uuid,
-        index:true,
+  id: {
+      type: String,
+      default: uuidv4,
+      index: true
     },
+
     partnerId:{
         type:String,
         require:true,
@@ -26,12 +28,30 @@ const Comments = new mongoose.Schema({
     comment:{
         type:String,
     },
-    mentioned:{
-        type:Object,
-
+    authorId:{
+        type:String, // userId who created comment
+        required:true,
     },
-    timestamps:true
-    
-
-})
+    mentioned:{
+        type: [Object], // array of mentioned users {userId, username}
+        default: []
+    },
+    isDeleted: {
+        type: Boolean,
+        default: false
+    },
+    parentId: {
+        type: String,
+        ref: 'Comments',
+        default: null
+    },
+    isEdited: {
+        type: Boolean,
+        default: false
+    }
+  },
+  {
+    timestamps: true
+  }
+)
 export const commentModel= mongoose.model('Comments',Comments)

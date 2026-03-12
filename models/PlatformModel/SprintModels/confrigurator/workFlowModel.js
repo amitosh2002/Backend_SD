@@ -77,9 +77,15 @@ const ScrumProjectFlowSchema = new mongoose.Schema(
       type: [FlowColumnSchema],
       required: true,
       validate: {
-        validator: (v) => v.length > 0,
-        message: "At least one column is required",
+        validator: (v) => v.length >= 0, // Allow empty columns for new flows
+        message: "Columns must be an array",
       },
+    },
+
+    /** Explicit status transitions (e.g. { OPEN: ["PROGRESS"] }) */
+    workflow: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
     },
 
     /** Import / reuse support */

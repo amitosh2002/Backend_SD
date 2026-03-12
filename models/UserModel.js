@@ -246,8 +246,6 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-userSchema.index({ email: 1 });
-
 // ⭐ FULL NAME
 userSchema.virtual("fullName").get(function () {
   if (this.profile.firstName && this.profile.lastName) {

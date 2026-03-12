@@ -80,7 +80,9 @@ const inAppNotificationSchema = new mongoose.Schema(
     // For UI icons/colors
     meta: {
       icon: String,
-      color: String
+      color: String,
+      avatar: String,
+      initials: String
     },
 
     isDeleted: {

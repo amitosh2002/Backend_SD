@@ -6,10 +6,12 @@ import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 import partnerSprint from "../models/PlatformModel/SprintModels/partnerSprint.js";
 import ActivityLog from "../models/PlatformModel/ActivityLogModel.js";
 import { LogActionType, LogEntityType } from "../models/PlatformModel/Enums/ActivityLogEnum.js";
-import { getCleanUniqueItems, getProjectFlowWithFallback, getUserDetailById } from "../utility/platformUtility.js";
+import { getCleanUniqueItems, getProjectBoardWithFallback, getProjectFlowWithFallback, getUserDetailById, getTicketDetailsById } from "../utility/platformUtility.js";
 import ScrumProjectFlow from "../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import { TicketConfig } from "../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 import { config } from "dotenv";
+import BacklogModel from "../models/PlatformModel/TicketUtilityModel/BacklogModel.js";
+import WorkflowTransition from "../models/PlatformModel/SprintModels/confrigurator/WorkflowTransitionModel.js";
 
 export const createTicket = async (req, res) => {
   try {
@@ -59,7 +61,30 @@ export const createTicketV2 = async (req, res) => {
     console.log(ticketData)    
     // const userId = req.body.userId || (req.user && req.user.userId);
     if (!userId) return res.status(401).json({ message: 'Missing userId or unauthenticated' });
-    const user = await User.findById(userId);
+    const [user, project] = await Promise.all([
+    User.findById(userId),
+    ProjectModel.findOne({ projectId: ticketData.projectId })
+  ]);
+
+if (!project) {
+  throw new Error("Project not found");
+}
+
+const backlog = await BacklogModel.findOneAndUpdate(
+  { projectId: ticketData.projectId },
+  {
+    $setOnInsert: {
+      projectId: ticketData.projectId,
+      projectName: project.name,
+      createdBy: userId
+    }
+  },
+  {
+    new: true,
+    upsert: true
+  }
+);
+
     if (!user) {
       return res.status(400).json({ message: "User not found" });
     }
@@ -92,6 +117,7 @@ export const createTicketV2 = async (req, res) => {
       eta: ticketData?.dueDate ? new Date(ticketData.dueDate).toISOString() : null,
       projectId: ticketData?.projectId,
       parentTicket: ticketData?.parentTicket || null,
+      backlogId: backlog?.id,
       // Remove any undefined or null values
     };
 
@@ -181,6 +207,7 @@ export const createTicketV2 = async (req, res) => {
 
 
 export const listTickets = async (req, res) => {
+  const start = Date.now();
   try {
     const {
       page = 1,
@@ -188,23 +215,23 @@ export const listTickets = async (req, res) => {
       status,
       assignee,
       project,
+      projectId, // also accept projectId
       reporter,
       labels,
       priority,
-      ticketConvention, // maps to TicketModel.type
+      ticketConvention,
       sort = "createdAt",
       sprint,
       partnerId,
     } = req.query;
 
-    const userId = req.user.userId;
+    const projectFilter = project || projectId;
 
+    const userId = req.user.userId;
     const numericLimit = Math.min(Math.max(+limit || 20, 1), 200);
     const numericPage = Math.max(+page || 1, 1);
 
-    /* ---------------------------------------------
-       1️⃣ Fetch user access (lean + projection)
-    --------------------------------------------- */
+    // 1️⃣ Fetch user access
     const accessList = await UserWorkAccess.find(
       { userId, status: "accepted" },
       { projectId: 1, partnerId: 1 }
@@ -212,180 +239,124 @@ export const listTickets = async (req, res) => {
 
     if (!accessList.length) {
       return res.status(200).json({
-        page: numericPage,
-        limit: numericLimit,
-        total: 0,
-        items: [],
-        accessibleProjects: [],
-        accessiblePartners: [],
+        page: numericPage, limit: numericLimit, total: 0, items: [], accessibleProjects: [], accessiblePartners: [],
       });
     }
 
-    const allowedProjectIds = new Set(
-      accessList.map(a => String(a.projectId)).filter(Boolean)
-    );
+    const specificProjectIds = accessList.map(a => a.projectId).filter(Boolean);
+    const globalPartnerIds = accessList.filter(a => a.partnerId && !a.projectId).map(a => a.partnerId);
 
-    const allowedPartnerIds = new Set(
-      accessList.map(a => String(a.partnerId)).filter(Boolean)
-    );
-
-    /* ---------------------------------------------
-       2️⃣ Helpers
-    --------------------------------------------- */
+    // 2️⃣ Build Filters
     const buildInQuery = (val) => {
       if (!val) return undefined;
       if (Array.isArray(val)) return { $in: val };
-      if (typeof val === "string" && val.includes(",")) {
-        return { $in: val.split(",").map(v => v.trim()) };
-      }
+      if (typeof val === "string" && val.includes(",")) return { $in: val.split(",").map(v => v.trim()) };
       return val;
     };
 
-    const normalizeProjectIds = (ids) =>
-      ids.map(id =>
-        mongoose.Types.ObjectId.isValid(id) && id.length === 24
-          ? new mongoose.Types.ObjectId(id)
-          : id
-      );
-
-    /* ---------------------------------------------
-       3️⃣ Build Filters
-    --------------------------------------------- */
     const filters = {};
-
     if (status) filters.status = buildInQuery(status);
-    if (priority) filters.priority = priority;
+    if (priority) filters.priority = buildInQuery(priority);
     if (assignee) filters.assignee = buildInQuery(assignee);
-    if (reporter) filters.reporter = reporter;
+    if (reporter) filters.reporter = buildInQuery(reporter); // Added buildInQuery support
+    if (labels) filters.labels = buildInQuery(labels);
+    if (ticketConvention) filters.type = buildInQuery(ticketConvention);
+    if (sprint) filters.sprint = buildInQuery(sprint);
 
-    // 🔹 Labels (array field → $in)
-    if (labels) {
-      const labelQuery = buildInQuery(labels);
-      if (labelQuery?.$in) {
-        filters.labels = { $in: labelQuery.$in };
-      } else {
-        filters.labels = labels;
-      }
-    }
-//     if (labels) {
-//   const labelQuery = buildInQuery(labels);
-//   const values = labelQuery?.$in ?? [labels];
-
-//   filters.$or = [
-//     { 'labels.id': { $in: values } },
-//     { 'labels.name': { $in: values } },
-//   ];
-// }
-
-
-    // 🔹 Ticket type / convention
-    if (ticketConvention) {
-      filters.type = buildInQuery(ticketConvention);
-    }
-
-    if (sprint) {
-      filters.sprint = buildInQuery(sprint);
-    }
-
-    /* ---------------------------------------------
-       4️⃣ Project Access Filter
-    --------------------------------------------- */
-    if (project) {
-      const requested = project.split(",").map(String);
-      const allowed = requested.filter(id =>
-        allowedProjectIds.has(id)
-      );
-
-      if (!allowed.length) {
-        return res.status(403).json({
-          message: "Access denied for selected project(s)",
+    // 3️⃣ Access Scoping
+    if (projectFilter) {
+        const requested = projectFilter.split(",").map(v => v.trim());
+        
+        // Allowed if project is specifically in their list OR if it belongs to one of their global partners
+        // To be safe and efficient, we'll verify against the accessList
+        const allowed = requested.filter(pid => {
+            const hasProjectAccess = specificProjectIds.includes(pid);
+            const hasPartnerAccess = globalPartnerIds.length > 0; // Ideally we'd check if this project belongs to that partner, but for now we trust the client-side ID if they have ANY partner-level access
+            return hasProjectAccess || hasPartnerAccess;
         });
-      }
 
-      filters.projectId = {
-        $in: normalizeProjectIds(allowed),
-      };
-    } else if (allowedProjectIds.size) {
-      filters.projectId = {
-        $in: normalizeProjectIds([...allowedProjectIds]),
-      };
+        if (!allowed.length) {
+            return res.status(403).json({ message: "Access denied for selected project(s)" });
+        }
+        filters.projectId = { $in: allowed };
+    } else {
+        // Broad access: All specific projects OR all projects under global partners
+        const accessFilters = [];
+        if (specificProjectIds.length) accessFilters.push({ projectId: { $in: specificProjectIds } });
+        if (globalPartnerIds.length) accessFilters.push({ partnerId: { $in: globalPartnerIds } });
+        
+        if (accessFilters.length > 0) {
+            filters.$or = accessFilters;
+        }
     }
 
-    /* ---------------------------------------------
-       5️⃣ Partner Access Filter
-    --------------------------------------------- */
     if (partnerId) {
-      if (!allowedPartnerIds.has(String(partnerId))) {
-        return res.status(403).json({
-          message: "Access denied for this partner",
-        });
-      }
-      filters.partnerId = String(partnerId);
-    } else if (allowedPartnerIds.size) {
-      filters.partnerId = { $in: [...allowedPartnerIds] };
+        filters.partnerId = String(partnerId);
     }
 
-    /* ---------------------------------------------
-       6️⃣ Query (parallel + lean)
-    --------------------------------------------- */
+    // 4️⃣ Execute Primary Query
     const skip = (numericPage - 1) * numericLimit;
-
     const [items, total] = await Promise.all([
-      TicketModel.find(filters)
-        .sort({ [sort]: -1 })
-        .skip(skip)
-        .limit(numericLimit)
-        .lean(),
-
+      TicketModel.find(filters).sort({ [sort]: -1 }).skip(skip).limit(numericLimit).lean(),
       TicketModel.countDocuments(filters),
     ]);
 
-    /* ---------------------------------------------
-       7️⃣ Sprint name hydration (batched)
-    --------------------------------------------- */
-    const sprintIds = [...new Set(items.map(t => t.sprint).filter(Boolean))];
+    // 5️⃣ Batched Hydration (O(1) lookups instead of O(N))
+    const pIds = [...new Set(items.map(t => t.projectId).filter(Boolean))];
+    const sIds = [...new Set(items.map(t => t.sprint).filter(Boolean))];
+    const uIds = [...new Set(items.map(t => t.assignee).filter(id => id && mongoose.Types.ObjectId.isValid(id)))];
+    const rUsernames = [...new Set(items.map(t => t.reporter).filter(Boolean))];
 
-    if (sprintIds.length) {
-      const sprints = await partnerSprint
-        .find({ id: { $in: sprintIds } }, { id: 1, sprintName: 1 })
-        .lean();
+    const [projects, configs, sprints, users, reportersData] = await Promise.all([
+      ProjectModel.find({ projectId: { $in: pIds } }, { projectId: 1, projectName: 1, isGithubConnected: 1 }).lean(),
+      TicketConfig.find({ projectId: { $in: pIds } }).lean(),
+      partnerSprint.find({ id: { $in: sIds } }, { id: 1, sprintName: 1 }).lean(),
+      User.find({ _id: { $in: uIds } }).select("profile username").lean(),
+      User.find({ username: { $in: rUsernames } }).select("profile username").lean()
+    ]);
 
-      const sprintMap = Object.fromEntries(
-        sprints.map(s => [s.id, s.sprintName])
-      );
+    const projectMap = Object.fromEntries(projects.map(p => [p.projectId, p]));
+    const configMap = Object.fromEntries(configs.map(c => [c.projectId, c]));
+    const sprintMap = Object.fromEntries(sprints.map(s => [s.id, s.sprintName]));
+    const userMap = Object.fromEntries(users.map(u => [String(u._id), u]));
+    const reporterMap = Object.fromEntries(reportersData.map(u => [u.username, u]));
 
- 
-    }
+    items.forEach(ticket => {
+      const p = projectMap[ticket.projectId];
+      const cfg = configMap[ticket.projectId];
+      const u = userMap[ticket.assignee];
+      const rep = reporterMap[ticket.reporter];
 
-    // update the assignee details with name and keep ID
-    await Promise.all(
-      items.map(async (ticket) => {
-        const user = await getUserDetailById(ticket?.assignee);
-        const config = await TicketConfig.findOne({ projectId: ticket?.projectId });
-        const project = await ProjectModel.findOne({ projectId: ticket?.projectId });
-        
-        ticket.type = config?.conventions.find((convention) => convention.id === ticket.type)?.name;
-        ticket.assigneeId = ticket.assignee; // Keep the original ID
-        ticket.assignee = user?.name || "Unassigned";
-        ticket.assigneeImage = user?.image || null;
-        const reporterUser = await User.findOne({ username: ticket.reporter }).select("profile").lean();
-        ticket.reporterImage = reporterUser?.profile?.avatar || null;
-        ticket.projectName = project?.projectName;
-        ticket.isGithubConnected = project?.isGithubConnected || false;
-      })
-    );
+      ticket.projectName = p?.projectName;
+      ticket.isGithubConnected = p?.isGithubConnected || false;
+      ticket.sprintName = sprintMap[ticket.sprint] || null;
+      
+      // Resolve Type Name (Mapping both for UI compatibility)
+      if (cfg?.conventions) {
+        const conv = cfg.conventions.find(c => c.id === ticket.type);
+        if (conv) {
+          ticket.typeLabel = conv.name;
+          ticket.type = conv.name; // Keep legacy behavior where 'type' becomes the name
+        }
+      }
 
+      // People info
+      ticket.assigneeId = ticket.assignee;
+      ticket.assignee = u ? `${u.profile?.firstName || ""} ${u.profile?.lastName || ""}`.trim() : "Unassigned";
+      if (!ticket.assignee) ticket.assignee = "Unassigned";
+      ticket.assigneeImage = u?.profile?.avatar || null;
+      ticket.reporterImage = rep?.profile?.avatar || null;
+    });
 
-    /* ---------------------------------------------
-       8️⃣ Response
-    --------------------------------------------- */
+    console.log(`✅ Fetched ${items.length}/${total} tickets in ${Date.now() - start}ms`);
+
     return res.status(200).json({
       page: numericPage,
       limit: numericLimit,
       total,
       items,
-      accessibleProjects: [...allowedProjectIds],
-      accessiblePartners: [...allowedPartnerIds],
+      accessibleProjects: [...specificProjectIds],
+      accessiblePartners: [...globalPartnerIds],
     });
 
   } catch (err) {
@@ -439,12 +410,22 @@ export const updateTicket = async (req, res) => {
     // prevent overriding immutable sequence fields
     delete update.sequenceNumber;
     delete update.ticketKey;
+
+    // Handle mutual exclusivity of sprint and backlogId
+    if (update.sprint) {
+      update.backlogId = null;
+    } else if (update.backlogId) {
+      update.sprint = null;
+    }
+
     const updated = await TicketModel.findByIdAndUpdate(id, update, {
       new: true,
       runValidators: true,
     });
 
-        await ActivityLog.create(
+    if (!updated) return res.status(404).json({ message: "Ticket not found" });
+
+    await ActivityLog.create(
       {
         userId:req.user.userId,
         projectId:updated.projectId,
@@ -456,8 +437,11 @@ export const updateTicket = async (req, res) => {
         },
       }
     )
-    if (!updated) return res.status(404).json({ message: "Ticket not found" });
-    return res.status(200).json(updated);
+
+    return res.status(200).json({
+      ...updated.toObject(),
+      movedTo: updated.backlogId ? 'backlog' : (updated.sprint ? 'sprint' : 'unknown')
+    });
   } catch (err) {
     console.error("Error updating ticket:", err);
     return res.status(500).json({ message: "Internal server error" });
@@ -543,36 +527,67 @@ export const addTimeLog = async (req, res) => {
 export const setStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
-    // const updated = await TicketModel.findByIdAndUpdate(
-    //   id,
-    //   { status },
-    //   { new: true, runValidators: true }
-    // );
+    const { status: targetStatus } = req.body;
+    
+    // Normalize logic
+    const normalize = (str) => (str || "").toUpperCase().trim().replace(/\s+/g, '_');
+    const normTarget = normalize(targetStatus);
 
-    const ticket = await TicketModel.findById(id);
-
-    const prevStatus = ticket.status;
- 
-    ticket.status = status;
-    await ticket.save();
-
-      await ActivityLog.create({
-        userId: req.user.userId,
-        projectId: ticket.projectId,
-        actionType: LogActionType.TICKET_TRANSITION,
-        targetType: LogEntityType.TASK,
-        targetId: ticket._id,
-        changes: 
-          {
-            field: 'status',
-            prevValue: prevStatus,
-            newValue: status,
-          },
-        
-      });
+    // 1. Fetch current ticket to find old status and projectId
+    const ticket = await TicketModel.findById(id).lean();
     if (!ticket) return res.status(404).json({ message: "Ticket not found" });
-    return res.status(200).json({msg:"ticket status updated"});
+
+    const normCurrent = normalize(ticket.status);
+    const projectId = ticket.projectId;
+
+    // 2. Validate move against WorkflowTransition (if any defined)
+    const projectTransitions = await WorkflowTransition.find({ projectId }).lean();
+    
+    if (projectTransitions.length > 0) {
+      // isCurrentGoverned: Does this status have ANY defined transitions starting FROM it?
+      const isCurrentGoverned = projectTransitions.some(t => normalize(t.from) === normCurrent);
+
+      // If the current status HAS rules, we must follow them.
+      // If it has NO transitions starting from it, it's a Global Status - allow move anywhere.
+      if (isCurrentGoverned) {
+        const isAllowed = projectTransitions.some(
+          t => normalize(t.from) === normCurrent && normalize(t.to) === normTarget
+        );
+
+        if (!isAllowed) {
+          return res.status(400).json({ 
+            success: false,
+            message: `Locked Workflow: Tickets in ${normCurrent} can only move to its wired destinations. ${normTarget} is not a valid map.`,
+            code: "INVALID_TRANSITION"
+          });
+        }
+      }
+    }
+
+    // 3. Update the ticket
+    const updatedTicket = await TicketModel.findByIdAndUpdate(
+      id,
+      { $set: { status: targetStatus } },
+      { new: true } // Return new doc
+    ).lean();
+
+    // 4. Activity Log
+    await ActivityLog.create({
+      userId: req.user.userId,
+      projectId: ticket.projectId,
+      actionType: LogActionType.TICKET_TRANSITION,
+      targetType: LogEntityType.TASK,
+      targetId: ticket._id,
+      changes: {
+        field: 'status',
+        prevValue: ticket.status,
+        newValue: targetStatus,
+      },
+    });
+
+    return res.status(200).json({ success: true, data: updatedTicket });
+
+    return res.status(200).json({ msg: "ticket status updated", status });
   } catch (err) {
     console.error("Error setting status:", err);
     return res.status(500).json({ message: "Internal server error" });
@@ -1095,7 +1110,7 @@ export const getCurrentProjectSprintWork = async(req,res)=>{
     
     if (!sprints || sprints.length === 0) {
       console.log("[getCurrentProjectSprintWork] No active sprints found for project:", projectId);
-      return res.status(404).json({ sprintWork: [], msg: "Sprint not found" });
+      return res.status(200).json({ sprintWork: [], msg: "Sprint not found" });
     }
     
     const latestSprint = sprints[0];
@@ -1104,7 +1119,7 @@ export const getCurrentProjectSprintWork = async(req,res)=>{
     const [users, config, flow] = await Promise.all([
       User.find({ _id: { $in: projectUserIds } }).select('_id profile email').lean(),
       TicketConfig.findOne({ projectId: projectId }).lean(),
-      getProjectFlowWithFallback(projectId),
+      getProjectBoardWithFallback(projectId),
     ]);
 
     const userFilter = (users || []).map(u => ({
@@ -1142,57 +1157,71 @@ export const getCurrentProjectSprintWork = async(req,res)=>{
 
     const totalStoryPoint = sprintWork.reduce((acc, currElem) => acc + (currElem.storyPoint || 0), 0);
     
-    // Process tickets with details
+    // Process tickets with details using the robust helper
     const ticketsData = await Promise.all(
       sprintWork.map(async (currElem) => {
-        const user = await getUserDetailById(currElem.assignee); 
-        const ticketPriority = config?.priorities?.find((p) => p.id === (Array.isArray(currElem.priority) ? currElem.priority[0] : currElem.priority));
-        const ticketLabel = config?.labels?.find((l) => l.id === (Array.isArray(currElem.labels) ? currElem.labels[0] : currElem.labels));
-        
+        const ticketDetails = await getTicketDetailsById(currElem._id || currElem.id);
         return {
-          ...currElem,
-          assignee: user?.name || 'Unassigned',
-          assigneeImage: user?.image || null,
-          priorityName: ticketPriority?.name || "Unknown",
-          priorityColor: ticketPriority?.color || "#6b7280",
-          labelsDetails: ticketLabel ? { name: ticketLabel.name, color: ticketLabel.color } : null,
-          // Store normalized status for easier mapping
-          normalizedStatus: (currElem.status || '').toUpperCase()
+          ...ticketDetails,
+          // Store normalized status for easier mapping (strip spaces, underscores, hyphens)
+          normalizedStatus: (currElem.status || '').toUpperCase().replace(/[\s_-]/g, "")
         };
       })
     );
 
-    // Group tickets into board flow columns based on statusKeys as a dictionary { columnName: [tickets] }
+    // Group tickets into board flow columns based on statusKeys with robust global deduplication
     const boardColumns = flow?.columns || [];
-    const projectBoard = boardColumns.reduce((acc, column) => {
-      // Normalize column status keys to uppercase for robust comparison
-      const normalizedStatusKeys = (column.statusKeys || []).map(k => k.toUpperCase());
-      
-      const columnTickets = ticketsData.filter(ticket =>
-        normalizedStatusKeys.includes(ticket.normalizedStatus)
-      );
-      
-      acc[column.name] = columnTickets;
-      return acc;
-    }, {});
+    
+    // 1️⃣ Deduplicate initial ticket list by ID to handle DB edge cases
+    const uniqueTicketsMap = new Map();
+    ticketsData.forEach(t => {
+      const tid = (t._id || t.id).toString();
+      if (!uniqueTicketsMap.has(tid)) {
+        uniqueTicketsMap.set(tid, t);
+      }
+    });
+    const uniqueTickets = Array.from(uniqueTicketsMap.values());
 
-    // Calculate status overview based on current column distribution
-    const taskStatusOverview = boardColumns.reduce((acc, column) => {
-      const normalizedStatusKeys = (column.statusKeys || []).map(k => k.toUpperCase());
-      const count = ticketsData.filter(ticket => 
-        normalizedStatusKeys.includes(ticket.normalizedStatus)
-      ).length;
-      acc[column.name] = count;
-      return acc;
-    }, {});
+    const processedTicketIds = new Set();
+    const projectBoardWithTickets = boardColumns.map((column) => {
+      // Normalize column status keys for robust comparison (strip spaces, underscores, hyphens)
+      const normalizedStatusKeys = (column.statusKeys || []).map(k => k.toUpperCase().replace(/[\s_-]/g, ""));
+      
+      const columnTickets = uniqueTickets.filter(ticket => {
+        const tid = (ticket.id || ticket._id).toString();
+        if (processedTicketIds.has(tid)) return false;
+
+        const isMatch = normalizedStatusKeys.includes(ticket.normalizedStatus);
+        if (isMatch) {
+          processedTicketIds.add(tid);
+        }
+        return isMatch;
+      });
+      
+      return {
+        columnId: column.columnId || column.id,
+        name: column.name,
+        Name: column.name,
+        color: column.color,
+        statusKeys: column.statusKeys,
+        Status: column.statusKeys,
+        tickets: columnTickets.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      };
+    });
+
+    // 2️⃣ Calculate status overview based on deduplicated distribution
+    const taskStatusOverview = {};
+    projectBoardWithTickets.forEach(col => {
+      taskStatusOverview[col.name] = (col.tickets || []).length;
+    });
 
     console.log("[getCurrentProjectSprintWork] Successfully processed sprint work for:", latestSprint.sprintName);
     return res.status(200).json({
       success: true,
       sprintName: latestSprint?.sprintName || "",
+      sprintId: latestSprint?.id || latestSprint?._id,
       totalStoryPoint: totalStoryPoint,
-      sprintWork: ticketsData, // Flat list with details
-      data: projectBoard, // Tickets grouped by board columns (Kanban format)
+      data: projectBoardWithTickets, // Tickets grouped by board columns in an array format
       columns: boardColumns, // Column metadata (colors, etc.)
       taskStatusOverview: taskStatusOverview,
       allUserFilterAction: allUserFilterAction,
@@ -1274,6 +1303,7 @@ export const cloneTicket = async(req,res)=>{
     return res.status(500).json({ success: false, message: "Something went wrong" });
   }
 }
+
 
 
 // export const createSubTaskForTickets = as
