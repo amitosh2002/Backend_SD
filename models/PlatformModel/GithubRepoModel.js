@@ -4,8 +4,6 @@ const GithubRepoSchema = new mongoose.Schema({
   repoId: { // GitHub repository ID (numeric or string)
     type: String,
     required: true,
-    unique: true,
-    index: true,
   },
   fullName: { // owner/name
     type: String,

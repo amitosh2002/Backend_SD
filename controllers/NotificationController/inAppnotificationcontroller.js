@@ -21,9 +21,10 @@ export const getNotificationForUser = async(req,res)=>{
 
 
         if (notification.length === 0) {
-            return res.status(404).json({
-                success:false,
-                message:"No notification found"
+            return res.status(200).json({
+                success:true,
+                message:"No notification found",
+                notification: []
             })
         }
         return res.status(200).json({
@@ -57,7 +58,7 @@ export const notificationMarkAsRead = async(req,res)=>{
         const notification = await inAppNotificationSchema.findOneAndUpdate({userId,notificationId:{$in:notificationIds}},{status:1},{new:true}).lean();
 
         if (!notification) {
-            return res.status(404).json({
+            return res.status(400).json({
                 success:false,
                 message:"Notification not found"
             })
@@ -95,9 +96,13 @@ export const noficationAnalytics = async(req,res)=>{
         const readNotification = notification.filter((item)=>item.status === 1).length;
 
         if (notification.length === 0) {
-            return res.status(404).json({
-                success:false,
-                message:"No notification found"
+            return res.status(200).json({
+                success:true,
+                message:"No notification found",
+                analytics: { barData: [], pieData: [], lineData: [] },
+                totalNotification: 0,
+                unreadNotification: 0,
+                readNotification: 0
             })
         }
 
