@@ -62,9 +62,7 @@ const TicketSchema = new mongoose.Schema(
     ticketKey: {
       type: String,
       required: false,
-      unique: true,
       sparse: true, // Allow null values but ensure uniqueness when present
-      index: true,
     },
     priority: {
       type: [String],   // array of label IDs
@@ -194,9 +192,13 @@ const TicketSchema = new mongoose.Schema(
       type: [String],   // array of ticket IDs
       default: [],
       index: true
-    }
+    },
+    backlogId: {
+    type: String,
+    ref: "Backlog",
+    default: null
+  }
   },
- 
   {
     timestamps: true,
     toJSON: { virtuals: true },

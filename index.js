@@ -23,10 +23,10 @@ import serviceRoutes from "./routes/HoraInternal/serviceRoutes.js";
 import { authenticateToken } from "./middleware/authMiddleware.js";
 import {generateDashboard} from "./utility/serverdashboard.js";
 import utilityRouter from "./routes/utilityRoutes/utillityRoutes.js";
+import requestLogger from "./utility/requestLogger.js";
 import inAppNotificationRoute from "./routes/NotificationRoutes/inAppNotificationRouteV1.js";
 import http from "http";
 import { initSocket } from "./Socket/socket.js";
-import { time } from "console";
 // import { MongoClient } from 'mongodb';
 // import bodyParser from 'body-parser';
 // import dotenv from 'dotenv';
@@ -36,6 +36,7 @@ const port = process.env.PORT || 8000;
 
 // Middleware
 app.use(express.json());
+app.use(requestLogger); // logs method, route, status & response time
 
 // cors
 

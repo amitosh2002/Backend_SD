@@ -21,6 +21,13 @@ import {
   getCurrentProjectSprintWork,
   cloneTicket,
 } from "../controllers/ticketController.js";
+import {
+  addTicketComment,
+  getTicketComments,
+  getProjectMembersForMentions,
+  updateTicketComment,
+  deleteTicketComment
+} from "../controllers/PlatformModel/commentController.js";
 import { authenticateToken } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
@@ -54,6 +61,13 @@ router.post("/v1/tickets/:id/labels/add", authenticateToken, addLabel);
 // router.post("/v1/tickets/:id/convert-to-sub-task", authenticateToken, convertToSubTask);
 // router.post("/v1/tickets/:id/convert-to-epic", authenticateToken, convertToEpic);
 router.post("/v1/tickets/:ticketId/clone", authenticateToken, cloneTicket);
+
+//==============Comments and Mentions Routes ========= 
+router.post("/v1/tickets/:id/comments", authenticateToken, addTicketComment);
+router.get("/v1/tickets/:id/comments", authenticateToken, getTicketComments);
+router.patch("/v1/comments/:commentId", authenticateToken, updateTicketComment);
+router.delete("/v1/comments/:commentId", authenticateToken, deleteTicketComment);
+router.get("/v1/projects/:projectId/members/mentions", authenticateToken, getProjectMembersForMentions);
 
 //==============Logs and other routes ========= 
 router.post("/v1/tickets/getAll",authenticateToken,getWorkLogActivity)

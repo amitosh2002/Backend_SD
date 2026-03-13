@@ -11,13 +11,15 @@ import { ProjectModel } from "../../models/PlatformModel/ProjectModels.js";
 import { UserWorkAccess } from "../../models/PlatformModel/UserWorkAccessModel.js";
 import User from "../../models/UserModel.js";
 import { sendInvitationEmail } from "../../services/emailService.js";
-import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getFullprojectCurrentWorkdetails, getProjectBoardWithFallback, getProjectFlowWithFallback, getUserDetailById } from "../../utility/platformUtility.js";
+import { accesTypeView, autoCreateDefaultBoardAndFlow, buildDropdownConfigFromFlow, getFullprojectCurrentWorkdetails, getProjectBoardWithFallback, getProjectFlowWithFallback, getTicketDetailsById, getUserDetailById } from "../../utility/platformUtility.js";
 import { TicketModel } from "../../models/TicketModels.js";
 import { TicketConfig } from "../../models/PlatformModel/TicketUtilityModel/TicketConfigModel.js";
 import HoraServiceSchema from "../../models/HoraInternal/HoraServiceSchema.js";
 import ProjectService from "../../models/PlatformModel/ProjectServiceSchema.js";
 import ScrumProjectFlow from "../../models/PlatformModel/SprintModels/confrigurator/workFlowModel.js";
 import SprintBoardConfig from "../../models/PlatformModel/SprintModels/confrigurator/sprintBoardModel.js";
+import BacklogModel from "../../models/PlatformModel/TicketUtilityModel/BacklogModel.js";
+import { createBulkNotification } from "../../utility/notificationUtility.js";
 
 // import { ProjectModel } from "../models/PlatformModel/ProjectModels.js";
 
@@ -307,6 +309,7 @@ export const userWithProjectRights = async (req, res) => {
         projectArray.push({
           id: proj.projectId,
           name: proj.name?? proj.projectName,
+          accessLevel: access.accessType,
         }
       );
       }
@@ -325,10 +328,11 @@ export const userWithProjectRights = async (req, res) => {
 };
 
 export const inviteUserToProject = async (req, res) => {
-  const { projectId, emails, accessType, message, invitedBy } = req.body
-;
-
+  const { projectId, emails, accessType, message } = req.body;
+  const userId = req.user.userId;// this is the user who is inviting
   console.log("first controller call")
+  let invitedBy = userId;
+
 
   try {
     // -------------------------
@@ -382,7 +386,7 @@ export const inviteUserToProject = async (req, res) => {
       await UserWorkAccess.create({
         projectId,
         partnerId,
-        invitedBy,
+        invitedBy:userId,
         accessType: accessType || 100,
         status: "pending",
         userId: null,
@@ -392,7 +396,7 @@ export const inviteUserToProject = async (req, res) => {
       // Save Invitation Tracking
       const inviteRes = await InvitationTracking.create({
         email,
-        invitedBy,
+        invitedBy:userId,
         projectId,
         partnerId,
         revoked: false,
@@ -525,7 +529,7 @@ export const invitationDetails = async (req, res) => {
     // const { invitedBy, projectId } = req.body;
     const invitedBy=req.body.invitedBy;
     const projectId=req.body.projectId;
-
+    console.log(req.body,"req.body")
     // Validation
     if (!invitedBy || !projectId) {
       return res.status(400).json({
@@ -1260,20 +1264,43 @@ export const projectInsightController = async(req,res)=>{
         priorityColor: mappedPriorities.length > 0 ? mappedPriorities[0].color : "#6b7280",
         // Map labels with colors
         labels: mappedLabels.map(l => ({ name: l.name, color: l.color })),
+        _id: ticket._id,
+        id: ticket._id,
       };
     }));
 
-    // Distribute tasks into board flow columns
+    // 1️⃣ Deduplicate initial ticket list by ID (and Key if necessary) to handle DB edge cases
+    const uniqueTicketsMap = new Map();
+    ticketsData.forEach(t => {
+      const tid = (t._id || t.id).toString();
+      if (!uniqueTicketsMap.has(tid)) {
+        uniqueTicketsMap.set(tid, t);
+      }
+    });
+    const uniqueTickets = Array.from(uniqueTicketsMap.values());
+
+    // 2️⃣ Distribute tasks into board flow columns with global deduplication
     const boardColumns = (projectFlow?.columns || []).sort((a, b) => (a.order || 0) - (b.order || 0));
+    const processedTicketIds = new Set();
+    
     const projectBoardWithTickets = boardColumns.map((column) => {
-      const columnTickets = ticketsData.filter(ticket => {
-        if (!ticket.status) return false;
-        const ticketStatus = ticket.status.toString().toUpperCase().replace(/[\s_-]/g, "");
-        const columnStatusKeys = (column.statusKeys || []).map(s => 
-          s.toString().toUpperCase().replace(/[\s_-]/g, "")
-        );
-        return columnStatusKeys.includes(ticketStatus);
+      const columnStatusKeys = (column.statusKeys || []).map(s => 
+        s.toString().toUpperCase().replace(/[\s_-]/g, "")
+      );
+
+      const columnTickets = uniqueTickets.filter(ticket => {
+        const tid = (ticket._id || ticket.id).toString();
+        if (!ticket.status || processedTicketIds.has(tid)) return false;
+        
+        const ticketStatus = (ticket.status || "").toString().toUpperCase().replace(/[\s_-]/g, "");
+        const isMatch = columnStatusKeys.includes(ticketStatus);
+        
+        if (isMatch) {
+          processedTicketIds.add(tid);
+        }
+        return isMatch;
       });
+      
       return {
         columnId: column.columnId || column.id,
         name: column.name,
@@ -1283,32 +1310,14 @@ export const projectInsightController = async(req,res)=>{
         Status: column.statusKeys,
         tickets: columnTickets
                     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-                    
       }
     });
 
-    // Group status overview by column names for a cleaner dashboard view
-const taskStatusOverview = boardColumns.reduce((acc, column) => {
-  // 1. Pre-normalize column keys to avoid repeating work inside the filter
-  const columnStatusKeys = (column.statusKeys || []).map(s => 
-    s.toString().toUpperCase().replace(/[\s_-]/g, "")
-  );
-
-  const columnTicketsCount = ticketsData.filter(ticket => {
-    if (!ticket.status) return false;
-
-    // 2. Normalize ticket status (handling spaces, underscores, AND hyphens)
-    const ticketStatus = ticket.status.toString().toUpperCase().replace(/[\s_-]/g, "");
-    
-    const isMatch = columnStatusKeys.includes(ticketStatus);
-
-
-    return isMatch;
-  }).length;
-  
-  acc[column.name] = (acc[column.name] || 0) + columnTicketsCount;
-  return acc;
-}, {});
+    // 3️⃣ Group status overview by column results for perfect consistency
+    const taskStatusOverview = {};
+    projectBoardWithTickets.forEach(col => {
+      taskStatusOverview[col.name] = (col.tickets || []).length;
+    });
     const teamMemberDetails = await Promise.all(
       users
         .filter(user => user.userId != null)
@@ -1340,4 +1349,222 @@ const taskStatusOverview = boardColumns.reduce((acc, column) => {
       error: error.message
     });
   }
+}
+
+// export const getBacklogForProjectWithTaskV1 = async(req,res)=>{
+//   try {
+//     const {projectId} = req.body;
+//     const userId=req.user.userId;
+
+//     const haveRights = await UserWorkAccess.exists({
+//       projectId: projectId,
+//       userId: userId,
+//       accessType: { $gte: 100 }
+//     });
+
+//     if (!haveRights) {
+//       return res.status(403).json({ success: false, msg: "Insufficient permissions to manage services." });
+//     }
+//     console.log(haveRights,"haveRights")
+
+//     const [projectBacklogs,project] = await Promise.all([
+//       BacklogModel.find({ projectId }),
+//       ProjectModel.find({projectId})
+//     ]);
+    
+
+//     const backlogData = await Promise.all(projectBacklogs.map(async (backlog) => {
+//       const backlogTickets = await TicketModel.find({ backlogId: backlog.id });
+//       const backlogsTicketDetails = backlogTickets.map(async (ticket) => {
+//         ticketDetails = await getTicketDetailsById(ticket._id || ticket.id);
+//         return {
+//          ...ticketDetails
+//         };
+//       });
+//       return {
+//         title: backlog.title,
+//         id: backlog.id,
+//       };
+//     }));
+
+//     return res.status(200).json({
+//       success: true,
+//       data: {
+//         backlogData,
+//         project: { projectName: project.projectName }
+//       }
+//     });
+//   } catch (error) {
+    
+//   }
+// }
+
+export const getBacklogForProjectWithTaskV1 = async (req, res) => {
+  try {
+    const { projectId } = req.body;
+    const userId = req.user.userId;
+
+    const haveRights = await UserWorkAccess.exists({
+      projectId: projectId,
+      userId: userId,
+      accessType: { $gte: 100 }
+    });
+
+    if (!haveRights) {
+      return res.status(403).json({
+        success: false,
+        msg: "Insufficient permissions to manage services."
+      });
+    }
+
+    const [projectBacklogs, project] = await Promise.all([
+      BacklogModel.find({ projectId, isDeleted: false }),
+      ProjectModel.findOne({ projectId })
+    ]);
+
+    const backlogData = await Promise.all(
+      projectBacklogs.map(async (backlog) => {
+
+        const backlogTickets = await TicketModel.find({
+          backlogId: backlog.id
+        });
+
+        const tickets = await Promise.all(
+          backlogTickets.map(async (ticket) => {
+            const ticketDetails = await getTicketDetailsById(ticket._id);
+            return ticketDetails;
+          })
+        );
+
+        return {
+          title: backlog.title || backlog.projectName,
+          id: backlog.id,
+          tickets
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        backlogData,
+        project: {
+          projectName: project?.projectName || project?.name
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      msg: "Server error"
+    });
+  }
+};
+
+export const createBacklogController = async (req, res) => {
+  try {
+    const { projectId, title } = req.body;
+    const userId = req.user.userId;
+
+    if (!projectId || !title) {
+      return res.status(400).json({
+        success: false,
+        msg: "Project ID and title are required"
+      });
+    }
+
+    const project = await ProjectModel.findOne({ projectId });
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        msg: "Project not found"
+      });
+    }
+
+    const newBacklog = await BacklogModel.create({
+      projectId,
+      title,
+      projectName: project.projectName || project.name,
+      createdBy: userId
+    });
+
+    return res.status(201).json({
+      success: true,
+      data: newBacklog,
+      msg: "Backlog created successfully"
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      msg: "Server error"
+    });
+  }
+};
+
+export const addUserToProjectV1 = async (req, res) => {
+    try {
+        const { projectId, targetUserEmail, role} = req.body;
+        const invitedBy = req.user.userId;
+
+        if(!projectId || !targetUserEmail || !role){
+            return res.status(400).json({
+                success: false,
+                msg: "Project ID, email and access type are required"
+            });
+        }
+
+        const [user,requestedBy] = await Promise.all([
+            User.findOne({email:targetUserEmail}),
+            User.findById(invitedBy)
+        ])
+
+        if(!user){
+            return res.status(404).json({
+                success: false,
+                msg: "User not found"
+            });
+        }
+
+        const project = await ProjectModel.findOne({projectId})
+        if(!project){
+            return res.status(404).json({
+                success: false,
+                msg: "Project not found"
+            });
+        }
+
+        const userWorkAccess = await UserWorkAccess.create({
+            projectId,
+            userId: user._id,
+            accessType:role,
+            invitedBy:requestedBy.email,
+            status:"accepted"
+
+        })
+
+        await createBulkNotification({
+          title:"Project Invitation",
+          message:`${requestedBy.username} added you to ${project.projectName}`,
+          type:"project",
+          userId:user._id,
+          projectId:projectId,
+        })  
+
+        return res.status(201).json({
+            success: true,
+            data: userWorkAccess,
+            msg: "User added to project successfully"
+        })
+    } catch (error) {
+        console.error("Error in addUserToProjectV1:", error);
+        res.status(500).json({ 
+            success: false, 
+            message: "Failed to add user to project", 
+            error: error.message 
+        });
+    }
 }
